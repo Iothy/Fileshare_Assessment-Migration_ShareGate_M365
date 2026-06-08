@@ -2,13 +2,18 @@
 
 ## Objectif
 
-Ce package permet de réaliser un assessment complet d'un environnement FileShare avant migration vers Microsoft 365 (SharePoint Online / OneDrive), afin de préparer le cadrage, la stratégie de migration et l'assainissement des données.
+Ce package permet de réaliser un assessment complet d'un environnement FileShare avant migration vers Microsoft 365 (SharePoint Online / OneDrive), afin de préparer le cadrage, la stratégie de migration et le nettoyage des données.
 
 ## Prérequis
 
 - Windows Server ou poste de travail avec accès réseau au FileShare
-- PowerShell 5.1 minimum (PowerShell 7+ recommandé, notamment pour les performances du script permissions)
-- Compte avec droits de lecture sur l'ensemble des partages à analyser
+- **PowerShell 7** (obligatoire)
+- Compte avec les permissions suivantes sur l'ensemble des partages à analyser :
+  - **Read** (lecture des fichiers et dossiers)
+  - **Read Permissions** (lecture des ACL/permissions NTFS)
+
+  > ⚠️ Sans ces deux permissions, le script `Get-FileSharePermissions.ps1` ne fonctionnera pas.
+
 - Optionnel : compte de service dédié (exécution via :
   `runas /netonly /user:<DOMAINE_AD>\<COMPTE_SERVICE_LECTURE> powershell.exe`)
 
@@ -72,6 +77,20 @@ Paramètre clé :
 ### `Export-AssessmentReport.ps1`
 Génère un rapport HTML décisionnel consolidé à partir des CSV produits.
 
+#### Prérequis spécifiques
+
+- Le module `Modules\Carambar.Assessment.psm1` doit être présent dans le dossier `Scripts Assessments/Modules/`
+- Le dossier `Output/` doit exister et contenir les fichiers CSV générés par les scripts d'assessment précédents (inventaire, permissions, extensions bloquées, doublons)
+- Le fichier `Config\FileShareMapping.csv` doit être renseigné (pour le mode enrichi par FileShare)
+
+> ⚠️ Ce script doit être exécuté **après** les autres scripts d'analyse. Sans les CSV dans le dossier `Output/`, le rapport ne contiendra aucune donnée.
+
+Paramètres clés :
+- `-CheminOutput` : chemin du dossier Output contenant les CSV (par défaut : `.\Output`)
+- `-FileShareMapping` : chemin du fichier FileShareMapping.csv (active le mode multi-rapports par FileShare)
+- `-ReportOutputPath` : dossier de destination des rapports HTML (par défaut : `Output/_Reports/`)
+- `-SplitByLevel1` : génère des rapports séparés par dossier de niveau 1
+
 ## Sorties
 
 - Création automatique du dossier `Output/`
@@ -79,15 +98,6 @@ Génère un rapport HTML décisionnel consolidé à partir des CSV produits.
 - Fichiers de métadonnées JSON
 - Logs d'exécution
 - Rapport HTML consolidé (via `Export-AssessmentReport.ps1`)
-
-## Durée estimée (volumétrie 10 TO)
-
-- Inventaire : ~2 à 4 heures
-- Permissions : ~1 à 3 heures (selon profondeur)
-- Doublons : ~30 min à 1 heure (avec `-MinSizeMB 50`)
-- Extensions : ~1 à 2 heures
-
-Total estimé : **4 à 10 heures** selon la structure et la qualité des données.
 
 ## Analyse des chemins trop longs
 
