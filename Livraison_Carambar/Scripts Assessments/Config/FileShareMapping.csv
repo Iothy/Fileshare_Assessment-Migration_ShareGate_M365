@@ -1,0 +1,3 @@
+CheminUNC;NomFileShare;TypeUsage;CibleM365;Owner;EmailOwner;Description
+\\<SERVEUR_FILESHARE>\PartageExemple1;PartageExemple1;Collaboratif;SharePoint;Nom Prenom;prenom.nom@carambar.fr;Description du partage
+\\<SERVEUR_FILESHARE>\PartageExemple2;PartageExemple2;Personnel;OneDrive;Nom Prenom;prenom.nom@carambar.fr;Home directories
