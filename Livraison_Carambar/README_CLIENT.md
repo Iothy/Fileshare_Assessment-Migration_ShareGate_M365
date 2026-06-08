@@ -134,6 +134,108 @@ Paramètres clés :
 - Logs d'exécution
 - Rapport HTML consolidé (via `Export-AssessmentReport.ps1`)
 
+## Guide de lecture des résultats — Permissions NTFS (`Get-FileSharePermissions.ps1`)
+
+### Fichiers générés
+
+Le script produit les fichiers suivants dans le dossier `Output/Permissions/` :
+
+| Fichier | Description |
+|---------|-------------|
+| `Permissions_NTFS_<NomFS>_<timestamp>.csv` | Export complet des ACL par FileShare |
+| `Permissions_NTFS_<timestamp>.csv` | CSV consolidé (tous les FileShares) |
+| `Permissions_InheritanceBroken_<timestamp>.csv` | Liste des dossiers avec héritage cassé |
+| `AccessDenied_<NomFS>_<timestamp>.csv` | Dossiers refusés lors de l'audit (droits insuffisants) |
+
+### Structure du CSV principal — Colonnes expliquées
+
+| Colonne | Signification | Comment lire |
+|---------|---------------|--------------|
+| `CheminDossier` | Chemin UNC complet du dossier analysé | Permet d'identifier précisément le dossier concerné |
+| `Proprietaire` | Propriétaire NTFS du dossier | Souvent le créateur original — utile pour identifier les responsables |
+| `Identite` | Utilisateur ou groupe AD qui possède l'accès | **Colonne clé** : identifie QUI a accès au dossier |
+| `TypeAcces` | `Allow` (autoriser) ou `Deny` (refuser) | Les `Deny` sont prioritaires et bloquent l'accès même si un `Allow` existe |
+| `Droits` | Niveau de permission accordé | Voir tableau des droits ci-dessous |
+| `EstHerite` | `True` = hérité du dossier parent, `False` = défini explicitement | Les ACE explicites (`False`) sont les plus importantes à analyser |
+| `InheritanceFlags` | Comment la permission se propage aux enfants | `ContainerInherit` = s'applique aux sous-dossiers, `ObjectInherit` = s'applique aux fichiers |
+| `PropagationFlags` | Contrôle de propagation avancé | `None` = s'applique ici et aux enfants, `InheritOnly` = ne s'applique qu'aux enfants |
+| `NomFileShare` | Nom du FileShare source | Permet de filtrer les résultats par partage |
+
+### Comprendre les droits NTFS
+
+| Droit | Signification | Équivalent simplifié |
+|-------|---------------|---------------------|
+| `FullControl` | Contrôle total (lecture, écriture, modification, suppression, modification des permissions) | Administrateur du dossier |
+| `Modify` | Lecture + écriture + suppression (sans modifier les permissions) | Contributeur avancé |
+| `ReadAndExecute, Synchronize` | Lecture seule + exécution | Lecteur |
+| `Write` | Écriture / ajout de contenu | Contributeur limité |
+| `Read` | Lecture seule | Lecteur strict |
+| `ListDirectory` | Lister le contenu d'un dossier uniquement | Navigation |
+
+### Comprendre l'héritage NTFS
+
+L'héritage est un concept fondamental pour la lecture des résultats :
+
+- **Héritage activé** (par défaut) : les permissions du dossier parent se propagent automatiquement aux sous-dossiers et fichiers. C'est le comportement normal.
+- **Héritage cassé** (`AreAccessRulesProtected = True`) : le dossier a ses propres permissions, indépendantes du parent. C'est une **rupture d'héritage**.
+
+#### Pourquoi les ruptures d'héritage sont importantes pour la migration ?
+
+Dans SharePoint Online / OneDrive, chaque rupture d'héritage :
+- **Crée un périmètre de sécurité unique** qui doit être reproduit côté M365
+- **Peut nécessiter un site ou une bibliothèque dédiée** si les permissions sont très différentes du parent
+- **Complexifie la gouvernance** post-migration (plus de ruptures = plus de maintenance)
+
+#### Décisions à prendre par le client
+
+| Situation | Action recommandée |
+|-----------|-------------------|
+| Dossier avec héritage cassé + permissions très restreintes | Envisager un **site SharePoint dédié** ou une **bibliothèque avec permissions uniques** |
+| Dossier avec héritage cassé + même groupe que le parent | **Rétablir l'héritage** avant migration (nettoyage) |
+| Nombreuses ruptures dans une même arborescence | **Restructurer** l'arborescence pour simplifier le modèle de permissions |
+| Groupes AD obsolètes ou inconnus dans les ACL | **Nettoyer les ACL** ou **mapper les groupes** vers Entra ID avant migration |
+
+### Comprendre les identités (colonne `Identite`)
+
+| Type d'identité | Exemple | Signification |
+|-----------------|---------|---------------|
+| Groupe AD domaine | `DOMAINE\GRP_Finance_RW` | Groupe Active Directory — doit être mappé vers un groupe Entra ID / M365 |
+| Utilisateur nominatif | `DOMAINE\jean.dupont` | Permission individuelle — à valider (devrait idéalement passer par un groupe) |
+| Groupes built-in | `BUILTIN\Administrators` | Groupe Windows local — ne sera **pas** migré tel quel |
+| `NT AUTHORITY\SYSTEM` | Compte système | Ignoré lors de la migration (pas de sens dans M365) |
+| `Everyone` / `Tout le monde` | Accès universel | ⚠️ **Point d'attention critique** : signifie que tout le monde a accès — à sécuriser dans M365 |
+| SID non résolu | `S-1-5-21-...` | Compte supprimé ou domaine inaccessible — à nettoyer |
+
+### Plan d'action basé sur les résultats
+
+1. **Identifier les ruptures d'héritage** → Fichier `Permissions_InheritanceBroken_*.csv`
+   - Arbitrer pour chaque rupture : conserver (site/biblio dédié) ou rétablir l'héritage
+
+2. **Mapper les groupes AD** → Colonne `Identite` (filtrer `EstHerite = False`)
+   - Lister tous les groupes AD uniques avec des ACE explicites
+   - Définir leur équivalent dans Entra ID (groupe M365, groupe de sécurité, etc.)
+
+3. **Nettoyer les SID orphelins** → Identités au format `S-1-5-21-...`
+   - Supprimer les entrées ACL pour les comptes qui n'existent plus
+
+4. **Traiter les dossiers refusés** → Fichier `AccessDenied_*.csv`
+   - Décider si ces dossiers doivent être migrés (nécessite un accès avec des droits supérieurs)
+
+5. **Simplifier les permissions individuelles** → Identités avec `\prenom.nom`
+   - Remplacer par des groupes AD quand c'est possible avant migration
+
+### Correspondance NTFS → SharePoint Online
+
+| Permission NTFS | Équivalent SharePoint Online |
+|-----------------|------------------------------|
+| `FullControl` | Contrôle total (Propriétaire du site) |
+| `Modify` | Contribuer (Membre du site) |
+| `ReadAndExecute` | Lire (Visiteur du site) |
+| `Write` sans `Read` | ⚠️ N'existe pas nativement dans SPO — sera ajusté |
+| `Deny` explicite | ⚠️ Pas de concept `Deny` dans SPO — doit être géré par exclusion |
+
+> ℹ️ **ShareGate et la migration des permissions** : ShareGate peut migrer les permissions NTFS vers SharePoint Online en mappant les groupes AD vers leurs équivalents Entra ID. Cependant, les ruptures d'héritage et les permissions complexes nécessitent une planification préalable pour garantir un résultat cohérent dans M365.
+
 ## Analyse des chemins trop longs
 
 Cette analyse n'est **pas incluse** dans ce package.
