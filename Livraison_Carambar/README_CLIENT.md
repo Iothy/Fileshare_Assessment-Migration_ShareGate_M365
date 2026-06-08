@@ -45,6 +45,7 @@ Exécuter le script principal (lancement séquentiel des analyses incluses) :
 .\Get-FileSharePermissions.ps1 -MappingCsv ".\Config\FileShareMapping.csv" -ThrottleLimit 1
 .\Get-BlockedExtensions.ps1 -MappingCsv ".\Config\FileShareMapping.csv"
 .\Get-DuplicateFiles.ps1 -MappingCsv ".\Config\FileShareMapping.csv" -MinSizeMB 50
+.\Get-InvalidCharacters.ps1 -MappingCsv ".\Config\FileShareMapping.csv"
 .\Export-AssessmentReport.ps1 -CheminOutput ".\Output" -FileShareMapping ".\Config\FileShareMapping.csv"
 ```
 
@@ -73,6 +74,40 @@ Détecte les fichiers dupliqués via hash SHA256.
 
 Paramètre clé :
 - `-MinSizeMB` : taille minimale de calcul (défaut 100 MB, recommandé 50 MB pour 10 TO)
+
+### `Get-InvalidCharacters.ps1`
+Détecte les fichiers et dossiers dont le nom est incompatible avec SharePoint Online / OneDrive.
+
+Contrôles réalisés :
+- Caractères invalides : `" * : < > ? / \ |`
+- Nom commençant par `#` ou `%`
+- Nom se terminant par un espace ou un point
+- Noms réservés Windows / SharePoint (CON, PRN, AUX, NUL, _vti_, forms, etc.)
+- Fichiers système (`desktop.ini`), de verrouillage (`.lock`) et temporaires Office (`~$`)
+- Nom dépassant 255 caractères
+
+Paramètres clés :
+- `-MappingCsv` : chemin du fichier FileShareMapping.csv (mode multi-chemins, recommandé)
+- `-CheminUNC` : chemin unique à analyser (mode mono-chemin)
+- `-OutputPath` : dossier de sortie des résultats (par défaut : `.\Output`)
+
+#### Traitement par ShareGate lors de la migration
+
+> ℹ️ Ce script est un **audit préventif**. Lors de la migration effective avec ShareGate, les caractères invalides sont traités automatiquement :
+>
+> - **Remplacement automatique** : ShareGate remplace par défaut les caractères invalides par un underscore `_` lors de la migration. Aucune action manuelle n'est requise pour ces fichiers.
+> - **Personnalisation** : le caractère de remplacement peut être modifié dans ShareGate via *Settings → Migration → Special and illegal characters*.
+> - **Cas particuliers `#` et `%`** : ces caractères sont désormais supportés par SharePoint Online, mais nécessitent une activation au niveau du tenant :
+>   ```powershell
+>   Set-SPOTenant -SpecialCharactersStateInFileFolderNames Allowed
+>   ```
+>   Sans cette activation, ShareGate les remplacera automatiquement.
+> - **Fichiers système** (`desktop.ini`, `.lock`, `~$*`) : ces fichiers sont **skippés nativement** par ShareGate et ne seront pas migrés (aucune action requise).
+>
+> **Sévérités du script** :
+> - `ERROR` : l'item ne migrera pas sans correction ou remplacement automatique (caractères invalides, noms réservés, noms > 255 car.)
+> - `WARN` : l'item migrera mais avec un risque selon la configuration du tenant (préfixes `#` / `%`)
+> - `INFO` : fichier skippé nativement par ShareGate (aucune action requise)
 
 ### `Export-AssessmentReport.ps1`
 Génère un rapport HTML décisionnel consolidé à partir des CSV produits.
