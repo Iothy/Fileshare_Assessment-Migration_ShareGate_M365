@@ -8,6 +8,7 @@
     soit Migrable = False), puis produit un classeur Excel a 2 onglets :
       - Synthese globale  : 1 ligne par file share + ligne TOTAL (KPI volumetrie)
       - Chemins trop longs : detail consolide des elements non migrables
+    La colonne 'File Share' contient le chemin UNC complet du partage (racine scannee).
     Objectif : communiquer a la direction une vue claire du volume a migrer et
     faciliter le suivi des remediations avant migration.
 .PARAMETER ReportsPath
@@ -94,6 +95,21 @@ function ConvertTo-Bool {
     return ("$Value".Trim() -ieq 'True')
 }
 
+# Chemin UNC complet du file share = le CheminSource le plus court du CSV
+# (= le dossier racine scanne, premier element de l'inventaire).
+# Repli sur le nom court ($Fallback) si aucun CheminSource exploitable.
+function Get-CheminFileShare {
+    param([object[]]$Items,[string]$Fallback)
+    $racine = $null
+    foreach ($it in $Items) {
+        $cs = "$($it.CheminSource)"
+        if ([string]::IsNullOrWhiteSpace($cs)) { continue }
+        if ($null -eq $racine -or $cs.Length -lt $racine.Length) { $racine = $cs }
+    }
+    if ([string]::IsNullOrWhiteSpace($racine)) { return $Fallback }
+    return $racine.TrimEnd('\')
+}
+
 # ======================================================================
 # COULEURS (alignees sur Convert-InventaireCsvToExcel.ps1)
 # ======================================================================
@@ -166,6 +182,9 @@ foreach ($csv in $csvRetenus) {
     $nomFS = ($rows | Where-Object { $_.NomFileShare } | Select-Object -First 1).NomFileShare
     if ([string]::IsNullOrWhiteSpace($nomFS)) { $nomFS = Split-Path -Leaf $csv.DirectoryName }
 
+    # Chemin UNC complet du file share (remplace le nom court dans la colonne 'File Share')
+    $cheminFS = Get-CheminFileShare -Items $rows -Fallback $nomFS
+
     $typeCible = ($rows | Where-Object { $_.TargetType } | Select-Object -First 1).TargetType
     if ([string]::IsNullOrWhiteSpace($typeCible)) { $typeCible = "(inconnu)" }
 
@@ -181,9 +200,9 @@ foreach ($csv in $csvRetenus) {
     $tropLongs         = @($rows | Where-Object { -not (ConvertTo-Bool $_.Migrable) })
     $tailleTropLongsMo = Get-SumTailleMo -Items $tropLongs
 
-    # Ligne de synthese (colonnes exactes demandees)
+    # Ligne de synthese (colonnes exactes demandees) - File Share = UNC complet
     $ligne = [ordered]@{
-        'File Share'           = $nomFS
+        'File Share'           = $cheminFS
         'Type cible'           = $typeCible
         'Nb elements'          = $rows.Count
         'Nb fichiers'          = $fichiers.Count
@@ -198,7 +217,7 @@ foreach ($csv in $csvRetenus) {
     # Detail consolide des chemins trop longs (pour le suivi remediation)
     foreach ($it in ($tropLongs | Sort-Object { [int]$_.DepassementMigration } -Descending)) {
         $cheminsTropLongs.Add([PSCustomObject][ordered]@{
-            'File Share'             = $nomFS
+            'File Share'             = $cheminFS
             'Type cible'             = $typeCible
             'Type'                   = $it.TypeElement
             'Nom'                    = $it.Nom
@@ -317,7 +336,7 @@ for ($col = 1; $col -le $maxCol; $col++) {
 $ws.View.FreezePanes($headerRow + 1, 1)
 for ($col = 1; $col -le $maxCol; $col++) {
     $ws.Column($col).AutoFit()
-    if ($ws.Column($col).Width -gt 55) { $ws.Column($col).Width = 55 }
+    if ($ws.Column($col).Width -gt 80) { $ws.Column($col).Width = 80 }
 }
 Close-ExcelPackage $xlPkg
 Write-Log "  -> $($syntheseGlobale.Count - 1) file share(s) + ligne TOTAL" "SUCCESS"
@@ -419,6 +438,6 @@ Write-Host ("    Chemins trop longs (>{0})   : {1}" -f $SeuilMigration, $totTrop
 Write-Host ("    Taille concernee (longs)    : {0} Go" -f (ConvertTo-Go $totTailleTropLongsMo)) -ForegroundColor White
 Write-Host ""
 Write-Host "  Onglets :" -ForegroundColor Cyan
-Write-Host "    1. Synthese globale   - 1 ligne par file share + TOTAL" -ForegroundColor White
+Write-Host "    1. Synthese globale   - 1 ligne par file share (UNC complet) + TOTAL" -ForegroundColor White
 Write-Host "    2. Chemins trop longs - detail consolide a remedier" -ForegroundColor White
 Write-Host ""
