@@ -8,7 +8,8 @@
     soit Migrable = False), puis produit un classeur Excel a 2 onglets :
       - Synthese globale  : 1 ligne par file share + ligne TOTAL (KPI volumetrie)
       - Chemins trop longs : detail consolide des elements non migrables
-    La colonne 'File Share' contient le chemin UNC complet du partage (racine scannee).
+    La colonne 'File Share' contient le chemin UNC complet du partage (racine reelle),
+    reconstruite de facon deterministe via 'CheminSource' moins 'ProfondeurSource' segments.
     Perimetre "migrable" = tout SAUF les extensions bloquees (les chemins > 400 car.
     restent comptes comme migrables car ils seront remedies avant migration).
     Objectif : communiquer a la direction une vue claire du volume a migrer et
@@ -97,19 +98,41 @@ function ConvertTo-Bool {
     return ("$Value".Trim() -ieq 'True')
 }
 
-# Chemin UNC complet du file share = le CheminSource le plus court du CSV
-# (= le dossier racine scanne, premier element de l'inventaire).
-# Repli sur le nom court ($Fallback) si aucun CheminSource exploitable.
+# Racine UNC du file share, reconstruite de facon deterministe :
+#   racine = CheminSource auquel on retire 'ProfondeurSource' segments.
+# La ligne racine n'est pas presente dans le CSV (prof min observee = 1),
+# donc on remonte depuis l'element de profondeur la plus FAIBLE (le plus sur).
+# Cela evite de capter un fichier court (ex. 'Thumbs.db') comme racine.
+# Garde-fou minimal : ne jamais remonter au-dessus de \\serveur\premier-segment.
 function Get-CheminFileShare {
     param([object[]]$Items,[string]$Fallback)
-    $racine = $null
+
+    $ref = $null; $refProf = [int]::MaxValue
     foreach ($it in $Items) {
         $cs = "$($it.CheminSource)"
         if ([string]::IsNullOrWhiteSpace($cs)) { continue }
-        if ($null -eq $racine -or $cs.Length -lt $racine.Length) { $racine = $cs }
+        $prof = 0
+        if (-not [int]::TryParse("$($it.ProfondeurSource)", [ref]$prof)) { continue }
+        if ($prof -lt $refProf) { $refProf = $prof; $ref = $cs.TrimEnd('\') }
     }
-    if ([string]::IsNullOrWhiteSpace($racine)) { return $Fallback }
-    return $racine.TrimEnd('\')
+    if ([string]::IsNullOrWhiteSpace($ref)) { return $Fallback }
+
+    # Plancher de securite = \\serveur\premier-segment (jamais en dessous)
+    $plancher = $ref
+    if ($ref.StartsWith('\\')) {
+        $segs = $ref.Substring(2) -split '\\' | Where-Object { $_ -ne '' }
+        if ($segs.Count -ge 2) { $plancher = '\\' + $segs[0] + '\' + $segs[1] }
+    }
+
+    # Remonter de refProf segments (chaque segment = un niveau sous la racine)
+    $racine = $ref
+    for ($i = 0; $i -lt $refProf; $i++) {
+        if ($racine.Length -le $plancher.Length) { break }
+        $parent = Split-Path -Parent $racine
+        if ([string]::IsNullOrWhiteSpace($parent) -or $parent.Length -lt $plancher.Length) { break }
+        $racine = $parent
+    }
+    return $racine
 }
 
 # ======================================================================
@@ -185,7 +208,7 @@ foreach ($csv in $csvRetenus) {
     $nomFS = ($rows | Where-Object { $_.NomFileShare } | Select-Object -First 1).NomFileShare
     if ([string]::IsNullOrWhiteSpace($nomFS)) { $nomFS = Split-Path -Leaf $csv.DirectoryName }
 
-    # Chemin UNC complet du file share (remplace le nom court dans la colonne 'File Share')
+    # Chemin UNC complet (racine reelle) : reconstruit via CheminSource - ProfondeurSource
     $cheminFS = Get-CheminFileShare -Items $rows -Fallback $nomFS
 
     $typeCible = ($rows | Where-Object { $_.TargetType } | Select-Object -First 1).TargetType
