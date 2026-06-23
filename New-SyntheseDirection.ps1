@@ -9,6 +9,8 @@
       - Synthese globale  : 1 ligne par file share + ligne TOTAL (KPI volumetrie)
       - Chemins trop longs : detail consolide des elements non migrables
     La colonne 'File Share' contient le chemin UNC complet du partage (racine scannee).
+    Perimetre "migrable" = tout SAUF les extensions bloquees (les chemins > 400 car.
+    restent comptes comme migrables car ils seront remedies avant migration).
     Objectif : communiquer a la direction une vue claire du volume a migrer et
     faciliter le suivi des remediations avant migration.
 .PARAMETER ReportsPath
@@ -165,6 +167,7 @@ $cheminsTropLongs = New-Object 'System.Collections.Generic.List[object]'
 
 # Compteurs TOTAL
 $totElements = 0; $totFichiers = 0; $totDossiers = 0
+$totElementsMigrables = 0
 $totTailleMo = 0.0; $totTailleMigrableMo = 0.0
 $totTropLongs = 0; $totTailleTropLongsMo = 0.0
 
@@ -192,23 +195,27 @@ foreach ($csv in $csvRetenus) {
     $dossiers   = @($rows | Where-Object { $_.TypeElement -eq 'Dossier' })
 
     # Volumetrie
+    # Perimetre migrable = tout SAUF extensions bloquees (les chemins > 400 restent inclus,
+    # car ils seront remedies avant migration). Le nombre et la taille partagent ce perimetre.
     $tailleMo          = Get-SumTailleMo -Items $rows
     $migrablesExtOk    = @($rows | Where-Object { -not (ConvertTo-Bool $_.ExtensionBloquee) })
+    $nbMigrables       = $migrablesExtOk.Count
     $tailleMigrableMo  = Get-SumTailleMo -Items $migrablesExtOk
 
     # Chemins trop longs = Migrable = False (strictement > 400 car. migration)
     $tropLongs         = @($rows | Where-Object { -not (ConvertTo-Bool $_.Migrable) })
     $tailleTropLongsMo = Get-SumTailleMo -Items $tropLongs
 
-    # Ligne de synthese (colonnes exactes demandees) - File Share = UNC complet
+    # Ligne de synthese - File Share = UNC complet ; Nb elements migrables avant Taille migrable
     $ligne = [ordered]@{
-        'File Share'           = $cheminFS
-        'Type cible'           = $typeCible
-        'Nb elements'          = $rows.Count
-        'Nb fichiers'          = $fichiers.Count
-        'Nb dossiers'          = $dossiers.Count
-        'Taille totale (Go)'   = ConvertTo-Go $tailleMo
-        'Taille migrable (Go)' = ConvertTo-Go $tailleMigrableMo
+        'File Share'            = $cheminFS
+        'Type cible'            = $typeCible
+        'Nb elements'           = $rows.Count
+        'Nb fichiers'           = $fichiers.Count
+        'Nb dossiers'           = $dossiers.Count
+        'Taille totale (Go)'    = ConvertTo-Go $tailleMo
+        'Nb elements migrables' = $nbMigrables
+        'Taille migrable (Go)'  = ConvertTo-Go $tailleMigrableMo
     }
     $ligne[$colTropLongs] = $tropLongs.Count
     $ligne['Taille concernee par chemins longs (Go)'] = ConvertTo-Go $tailleTropLongsMo
@@ -234,13 +241,14 @@ foreach ($csv in $csvRetenus) {
     $totElements          += $rows.Count
     $totFichiers          += $fichiers.Count
     $totDossiers          += $dossiers.Count
+    $totElementsMigrables += $nbMigrables
     $totTailleMo          += $tailleMo
     $totTailleMigrableMo  += $tailleMigrableMo
     $totTropLongs         += $tropLongs.Count
     $totTailleTropLongsMo += $tailleTropLongsMo
 
-    Write-Log ("  -> {0} elements | {1} Go total | {2} chemins trop longs ({3} Go)" -f `
-        $rows.Count, (ConvertTo-Go $tailleMo), $tropLongs.Count, (ConvertTo-Go $tailleTropLongsMo)) "SUCCESS"
+    Write-Log ("  -> {0} elements ({1} migrables) | {2} Go total | {3} chemins trop longs ({4} Go)" -f `
+        $rows.Count, $nbMigrables, (ConvertTo-Go $tailleMo), $tropLongs.Count, (ConvertTo-Go $tailleTropLongsMo)) "SUCCESS"
 }
 
 if ($syntheseGlobale.Count -eq 0) {
@@ -249,13 +257,14 @@ if ($syntheseGlobale.Count -eq 0) {
 
 # Ligne TOTAL
 $ligneTotal = [ordered]@{
-    'File Share'           = 'TOTAL'
-    'Type cible'           = ''
-    'Nb elements'          = $totElements
-    'Nb fichiers'          = $totFichiers
-    'Nb dossiers'          = $totDossiers
-    'Taille totale (Go)'   = ConvertTo-Go $totTailleMo
-    'Taille migrable (Go)' = ConvertTo-Go $totTailleMigrableMo
+    'File Share'            = 'TOTAL'
+    'Type cible'            = ''
+    'Nb elements'           = $totElements
+    'Nb fichiers'           = $totFichiers
+    'Nb dossiers'           = $totDossiers
+    'Taille totale (Go)'    = ConvertTo-Go $totTailleMo
+    'Nb elements migrables' = $totElementsMigrables
+    'Taille migrable (Go)'  = ConvertTo-Go $totTailleMigrableMo
 }
 $ligneTotal[$colTropLongs] = $totTropLongs
 $ligneTotal['Taille concernee par chemins longs (Go)'] = ConvertTo-Go $totTailleTropLongsMo
@@ -431,6 +440,7 @@ Write-Host ""
 Write-Host "  KPI globaux :" -ForegroundColor Cyan
 Write-Host ("    File shares analyses        : {0}" -f ($syntheseGlobale.Count - 1)) -ForegroundColor White
 Write-Host ("    Elements totaux             : {0}" -f $totElements) -ForegroundColor White
+Write-Host ("    Elements migrables (h. ext) : {0}" -f $totElementsMigrables) -ForegroundColor White
 Write-Host ("    Taille totale               : {0} Go" -f (ConvertTo-Go $totTailleMo)) -ForegroundColor White
 Write-Host ("    Taille migrable (hors ext.) : {0} Go" -f (ConvertTo-Go $totTailleMigrableMo)) -ForegroundColor White
 Write-Host ("    Chemins trop longs (>{0})   : {1}" -f $SeuilMigration, $totTropLongs) `
