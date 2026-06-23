@@ -108,6 +108,9 @@ $bleuEntete  = [System.Drawing.Color]::FromArgb(68, 114, 196)
 $grisTotal   = [System.Drawing.Color]::FromArgb(217, 217, 217)
 $blancTexte  = [System.Drawing.Color]::White
 
+# Nom de colonne dynamique (le seuil est parametrable) - calcule UNE fois
+$colTropLongs = "Nb chemins trop longs (>$SeuilMigration)"
+
 Write-Host ""
 Write-Host "========================================================" -ForegroundColor Cyan
 Write-Host " Espace de synthese direction - Volumetrie & chemins longs" -ForegroundColor Cyan
@@ -179,24 +182,21 @@ foreach ($csv in $csvRetenus) {
     $tailleTropLongsMo = Get-SumTailleMo -Items $tropLongs
 
     # Ligne de synthese (colonnes exactes demandees)
-    $syntheseGlobale.Add([PSCustomObject][ordered]@{
-        'File Share'                              = $nomFS
-        'Type cible'                              = $typeCible
-        'Nb elements'                             = $rows.Count
-        'Nb fichiers'                             = $fichiers.Count
-        'Nb dossiers'                             = $dossiers.Count
-        'Taille totale (Go)'                      = ConvertTo-Go $tailleMo
-        'Taille migrable (Go)'                    = ConvertTo-Go $tailleMigrableMo
-        'Nb chemins trop longs (>' + $SeuilMigration + ')' = $tropLongs.Count
-        'Taille concernee par chemins longs (Go)' = ConvertTo-Go $tailleTropLongsMo
-    })
+    $ligne = [ordered]@{
+        'File Share'           = $nomFS
+        'Type cible'           = $typeCible
+        'Nb elements'          = $rows.Count
+        'Nb fichiers'          = $fichiers.Count
+        'Nb dossiers'          = $dossiers.Count
+        'Taille totale (Go)'   = ConvertTo-Go $tailleMo
+        'Taille migrable (Go)' = ConvertTo-Go $tailleMigrableMo
+    }
+    $ligne[$colTropLongs] = $tropLongs.Count
+    $ligne['Taille concernee par chemins longs (Go)'] = ConvertTo-Go $tailleTropLongsMo
+    $syntheseGlobale.Add([PSCustomObject]$ligne)
 
     # Detail consolide des chemins trop longs (pour le suivi remediation)
     foreach ($it in ($tropLongs | Sort-Object { [int]$_.DepassementMigration } -Descending)) {
-        $tMo = 0.0
-        if ($it.TailleMo -and "$($it.TailleMo)" -ne '') {
-            [double]::TryParse(("$($it.TailleMo)" -replace ',', '.'), [System.Globalization.NumberStyles]::Any, [System.Globalization.CultureInfo]::InvariantCulture, [ref]$tMo) | Out-Null
-        }
         $cheminsTropLongs.Add([PSCustomObject][ordered]@{
             'File Share'             = $nomFS
             'Type cible'             = $typeCible
@@ -229,18 +229,18 @@ if ($syntheseGlobale.Count -eq 0) {
 }
 
 # Ligne TOTAL
-$colTropLongs = 'Nb chemins trop longs (>' + $SeuilMigration + ')'
-$syntheseGlobale.Add([PSCustomObject][ordered]@{
-    'File Share'                              = 'TOTAL'
-    'Type cible'                              = ''
-    'Nb elements'                             = $totElements
-    'Nb fichiers'                             = $totFichiers
-    'Nb dossiers'                             = $totDossiers
-    'Taille totale (Go)'                      = ConvertTo-Go $totTailleMo
-    'Taille migrable (Go)'                    = ConvertTo-Go $totTailleMigrableMo
-    $colTropLongs                             = $totTropLongs
-    'Taille concernee par chemins longs (Go)' = ConvertTo-Go $totTailleTropLongsMo
-})
+$ligneTotal = [ordered]@{
+    'File Share'           = 'TOTAL'
+    'Type cible'           = ''
+    'Nb elements'          = $totElements
+    'Nb fichiers'          = $totFichiers
+    'Nb dossiers'          = $totDossiers
+    'Taille totale (Go)'   = ConvertTo-Go $totTailleMo
+    'Taille migrable (Go)' = ConvertTo-Go $totTailleMigrableMo
+}
+$ligneTotal[$colTropLongs] = $totTropLongs
+$ligneTotal['Taille concernee par chemins longs (Go)'] = ConvertTo-Go $totTailleTropLongsMo
+$syntheseGlobale.Add([PSCustomObject]$ligneTotal)
 
 # ======================================================================
 # ONGLET 1 - SYNTHESE GLOBALE
