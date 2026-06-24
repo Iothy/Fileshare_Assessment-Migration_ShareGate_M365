@@ -13,8 +13,10 @@
           * SharePoint            -> bibliotheque par defaut du site
           * Teams-Channel General -> <lib>/General/<...>
           * Teams-Private-Channel -> bibliotheque par defaut du site dedie au canal prive
-        La bibliotheque par defaut est detectee dynamiquement (BaseTemplate 101),
-        ce qui gere "Shared Documents" vs "Documents" et les sites multilingues.
+        La bibliotheque par defaut est detectee dynamiquement (BaseTemplate 101,
+        RootFolder.Name = "Shared Documents"/"Documents"), en EXCLUANT les
+        bibliotheques systeme (SiteAssets, Style Library, Form Templates, etc.).
+        Cela gere aussi "Shared Documents" vs "Documents" et les sites multilingues.
       - Parcours recursif (post-ordre) du dossier racine resolu.
       - Tout sous-dossier ne contenant aucun fichier (ni direct, ni dans ses
         sous-dossiers) est supprime.
@@ -58,6 +60,19 @@ $Delimiter        = ';'
 
 # Dossiers racine a NE JAMAIS supprimer (racine de canal Teams standard, etc.)
 $ProtectedLeafNames = @('General')
+
+# Bibliotheques systeme a EXCLURE de la detection (meme BaseTemplate 101).
+# Comparaison faite sur RootFolder.Name (nom interne, stable).
+$ExcludedLibInternalNames = @(
+    'SiteAssets',
+    'Style Library',
+    'FormServerTemplates',
+    'Form Templates',
+    'SitePages',
+    'Site Pages',
+    'Lists',
+    'Preservation Hold Library'
+)
 
 # --- 0. Pre-requis ---------------------------------------------------------
 Import-Module PnP.PowerShell    -ErrorAction Stop
@@ -136,7 +151,41 @@ foreach ($col in 'TargetType','TargetSPOURL','TargetFolder') {
     }
 }
 
-# --- 2. Resolution de la racine selon TargetType ---------------------------
+# --- 2. Detection de la bibliotheque par defaut ----------------------------
+# SharePoint n'expose pas de propriete "bibliotheque par defaut" et plusieurs
+# bibliotheques partagent BaseTemplate 101 (SiteAssets, Style Library...).
+# On exclut donc les bibliotheques systeme puis on priorise celle dont
+# RootFolder.Name vaut "Shared Documents" ou "Documents".
+function Get-DefaultDocumentLibrary {
+    param(
+        [Parameter(Mandatory)] $Connection
+    )
+
+    $docLibs = Get-PnPList -Connection $Connection -ErrorAction Stop |
+               Where-Object {
+                   $_.BaseTemplate -eq 101 -and
+                   -not $_.Hidden -and
+                   ($ExcludedLibInternalNames -notcontains $_.RootFolder.Name)
+               }
+
+    if (-not $docLibs) {
+        throw "Aucune bibliotheque de documents (BaseTemplate 101) exploitable trouvee sur le site."
+    }
+
+    # 1) Priorite : RootFolder.Name = "Shared Documents" ou "Documents"
+    $defaultLib = $docLibs |
+                  Where-Object { $_.RootFolder.Name -in @('Shared Documents','Documents') } |
+                  Select-Object -First 1
+
+    # 2) Fallback : premiere bibliotheque non-systeme restante
+    if (-not $defaultLib) {
+        $defaultLib = $docLibs | Select-Object -First 1
+    }
+
+    return $defaultLib
+}
+
+# --- 3. Resolution de la racine selon TargetType ---------------------------
 # Retourne un objet : ServerRelative (chemin server-relative du dossier racine
 # a nettoyer), LibRoot (racine de bibliotheque server-relative), Leaf.
 function Resolve-TargetRoot {
@@ -149,16 +198,8 @@ function Resolve-TargetRoot {
     # Normalise les separateurs (\ -> /), supprime les slashes superflus
     $folder = ($TargetFolder -replace '\\','/' -replace '/+','/').Trim('/')
 
-    # Detection dynamique de la bibliotheque par defaut (gere "Documents" vs
-    # "Shared Documents" et les sites multilingues).
-    $defaultLib = Get-PnPList -Connection $Connection -ErrorAction Stop |
-                  Where-Object { $_.BaseTemplate -eq 101 -and -not $_.Hidden } |
-                  Sort-Object -Property @{ E = { $_.RootFolder.ServerRelativeUrl.Length } } |
-                  Select-Object -First 1
-    if (-not $defaultLib) {
-        throw "Aucune bibliotheque de documents (BaseTemplate 101) trouvee sur le site."
-    }
-    $libRoot = $defaultLib.RootFolder.ServerRelativeUrl.TrimEnd('/')  # ex: /sites/xxx/Shared Documents
+    $defaultLib = Get-DefaultDocumentLibrary -Connection $Connection
+    $libRoot    = $defaultLib.RootFolder.ServerRelativeUrl.TrimEnd('/')  # ex: /sites/xxx/Shared Documents
 
     switch -Wildcard ($TargetType.Trim()) {
 
@@ -194,7 +235,7 @@ function Resolve-TargetRoot {
     }
 }
 
-# --- 3. Fonction recursive : suppression des sous-dossiers vides -----------
+# --- 4. Fonction recursive : suppression des sous-dossiers vides -----------
 # Un SEUL appel Get-PnPFolderItem par dossier (fichiers + dossiers), puis tri
 # local. Decremente le compteur d'enfants au fil des suppressions plutot que de
 # relire le serveur.
@@ -282,7 +323,7 @@ function Test-ChildDeleted {
     return (-not $exists)
 }
 
-# --- 4. Boucle principale --------------------------------------------------
+# --- 5. Boucle principale --------------------------------------------------
 # Dedoublonner sur (TargetType + TargetSPOURL + TargetFolder) pour ne traiter
 # qu'une fois chaque arborescence racine.
 $targets = $rows |
@@ -308,6 +349,8 @@ $results = foreach ($t in $targets) {
 
         # Resolution de la racine selon le type de cible
         $root = Resolve-TargetRoot -TargetType $t.Type -TargetFolder $t.Folder -Connection $conn
+
+        Write-Log @log_params -Msg "[LIB] $($t.Url)  ->  bibliotheque par defaut : $($root.LibRoot)" -Type INFO
 
         # --- Garde-fous de securite ---
         if ($root.ServerRelative -eq $root.LibRoot) {
@@ -360,7 +403,7 @@ $results = foreach ($t in $targets) {
     }
 }
 
-# --- 5. Export rapport + bilan ---------------------------------------------
+# --- 6. Export rapport + bilan ---------------------------------------------
 try {
     $results | Export-Csv -Path $reportCsv -Delimiter $Delimiter -NoTypeInformation -Encoding UTF8
     Write-Log @log_params -Msg "Rapport exporte : $reportCsv" -Type INFO
