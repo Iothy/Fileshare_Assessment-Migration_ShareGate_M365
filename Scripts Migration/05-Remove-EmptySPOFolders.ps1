@@ -2,7 +2,7 @@
 .SYNOPSIS
     Supprime les dossiers vides migres par ShareGate, sous l'arborescence cible
     definie dans un fichier de mapping (CSV), pour des cibles SharePoint Online,
-    canaux Teams standard ("General") et canaux Teams prives.
+    canaux Teams standard et canaux Teams prives.
 
 .DESCRIPTION
     Etape finale d'une migration FileShare -> M365.
@@ -10,12 +10,19 @@
     Pour chaque ligne du mapping :
       - Connexion PnP au site TargetSPOURL.
       - Resolution de la racine de nettoyage en fonction de TargetType :
-          * SharePoint            -> bibliotheque par defaut du site
-          * Teams-Channel General -> <lib>/General/<...>
-          * Teams-Private-Channel -> bibliotheque par defaut du site dedie au canal prive
+          * SharePoint            -> le 1er segment du TargetFolder est le NOM EXACT
+                                     de la bibliotheque cible (ex: "Shared Documents/..."
+                                     ou "Factures/..." si le client utilise une autre lib).
+          * Teams-Channel         -> TOUJOURS la bibliotheque par defaut (Shared Documents) ;
+                                     le TargetFolder commence par le nom du canal
+                                     (ex: "General/..." ou "03 IT Services/...").
+          * Teams-Private-Channel -> TOUJOURS la bibliotheque par defaut du site dedie ;
+                                     le TargetFolder ne commence PAS par "Shared Documents".
         La bibliotheque par defaut est detectee dynamiquement (BaseTemplate 101,
         RootFolder.Name = "Shared Documents"/"Documents"), en EXCLUANT les
         bibliotheques systeme (SiteAssets, Style Library, Form Templates, etc.).
+        Une bibliotheque nommee (cas SharePoint) est resolue par son Title OU son
+        RootFolder.Name.
         IMPORTANT : RootFolder est explicitement charge via Get-PnPProperty, car
         ses sous-proprietes (Name, ServerRelativeUrl) ne sont PAS peuplees par
         defaut par Get-PnPList.
@@ -160,32 +167,39 @@ foreach ($col in 'TargetType','TargetSPOURL','TargetFolder') {
     }
 }
 
-# --- 2. Detection de la bibliotheque par defaut ----------------------------
-# SharePoint n'expose pas de propriete "bibliotheque par defaut" et plusieurs
-# bibliotheques partagent BaseTemplate 101 (SiteAssets, Style Library...).
-# IMPORTANT : Get-PnPList ne peuple PAS RootFolder ; on force son chargement via
-# Get-PnPProperty, sinon RootFolder.Name et RootFolder.ServerRelativeUrl sont vides.
-# On exclut ensuite les bibliotheques systeme puis on priorise celle dont
-# RootFolder.Name vaut "Shared Documents" ou "Documents".
-function Get-DefaultDocumentLibrary {
+# --- 2a. Cache des bibliotheques d'un site ---------------------------------
+# Recupere toutes les bibliotheques (BaseTemplate 101, non masquees) avec
+# RootFolder charge. Mise en cache par connexion pour eviter les appels repetes.
+function Get-SiteDocumentLibraries {
     param(
         [Parameter(Mandatory)] $Connection
     )
 
-    $docLibs = @(Get-PnPList -Connection $Connection -ErrorAction Stop |
-                 Where-Object { $_.BaseTemplate -eq 101 -and -not $_.Hidden })
+    $libs = @(Get-PnPList -Connection $Connection -ErrorAction Stop |
+              Where-Object { $_.BaseTemplate -eq 101 -and -not $_.Hidden })
 
-    if (-not $docLibs) {
+    if (-not $libs) {
         throw "Aucune bibliotheque de documents (BaseTemplate 101) trouvee sur le site."
     }
 
     # Force le chargement de RootFolder (Name + ServerRelativeUrl)
-    foreach ($l in $docLibs) {
+    foreach ($l in $libs) {
         Get-PnPProperty -ClientObject $l -Property RootFolder -Connection $Connection | Out-Null
     }
 
-    # Exclure les bibliotheques systeme (sur RootFolder.Name desormais peuple)
-    $docLibs = @($docLibs | Where-Object { $ExcludedLibInternalNames -notcontains $_.RootFolder.Name })
+    return $libs
+}
+
+# --- 2b. Bibliotheque par defaut (Teams standard / Teams prive) -------------
+# Exclut les bibliotheques systeme puis priorise celle dont RootFolder.Name
+# vaut "Shared Documents" ou "Documents".
+function Get-DefaultDocumentLibrary {
+    param(
+        [Parameter(Mandatory)] $Connection,
+        [Parameter(Mandatory)] $Libraries
+    )
+
+    $docLibs = @($Libraries | Where-Object { $ExcludedLibInternalNames -notcontains $_.RootFolder.Name })
     if (-not $docLibs) {
         throw "Aucune bibliotheque de documents exploitable (apres exclusion des libs systeme)."
     }
@@ -201,6 +215,27 @@ function Get-DefaultDocumentLibrary {
     }
 
     return $defaultLib
+}
+
+# --- 2c. Bibliotheque par nom (cas SharePoint) ------------------------------
+# Resout une bibliotheque dont le 1er segment du TargetFolder correspond au
+# Title OU au RootFolder.Name (les deux sont identiques pour une lib creee par
+# le client ; on teste les deux par robustesse).
+function Get-LibraryByName {
+    param(
+        [Parameter(Mandatory)] $Connection,
+        [Parameter(Mandatory)] $Libraries,
+        [Parameter(Mandatory)] [string]$Name
+    )
+
+    $match = $Libraries |
+             Where-Object { $_.Title -eq $Name -or $_.RootFolder.Name -eq $Name } |
+             Select-Object -First 1
+
+    if (-not $match) {
+        throw "Bibliotheque '$Name' introuvable sur le site (1er segment du TargetFolder)."
+    }
+    return $match
 }
 
 # --- 3. Resolution de la racine selon TargetType ---------------------------
@@ -221,39 +256,51 @@ function Resolve-TargetRoot {
     # Normalise les separateurs (\ -> /), supprime les slashes superflus
     $folder = ($TargetFolder -replace '\\','/' -replace '/+','/').Trim('/')
 
-    $defaultLib = Get-DefaultDocumentLibrary -Connection $Connection
-    $libServer  = $defaultLib.RootFolder.ServerRelativeUrl.TrimEnd('/')    # ex: /sites/web/Shared Documents
+    # Bibliotheques du site (avec RootFolder charge) - 1 seule recuperation
+    $libraries = Get-SiteDocumentLibraries -Connection $Connection
 
+    # ServerRelativeUrl du web (ex: /sites/web)
     $web       = Get-PnPWeb -Connection $Connection -ErrorAction Stop
-    $webServer = $web.ServerRelativeUrl.TrimEnd('/')                        # ex: /sites/web
-
-    # SITE-relative de la lib = ServerRelative de la lib MOINS le prefixe du web
-    $libSiteRel = $libServer
-    if ($webServer -and $libServer.StartsWith($webServer, [System.StringComparison]::OrdinalIgnoreCase)) {
-        $libSiteRel = $libServer.Substring($webServer.Length).Trim('/')
-    }
+    $webServer = $web.ServerRelativeUrl.TrimEnd('/')
 
     switch -Wildcard ($TargetType.Trim()) {
 
         'SharePoint' {
-            # Le TargetFolder contient DEJA "Shared Documents/..." ou "Documents/..."
-            # -> on retire le prefixe lib s'il est present pour eviter le doublon.
-            $clean = $folder -replace '^(Shared Documents|Documents)/', ''
+            # Le 1er segment du TargetFolder = NOM EXACT de la bibliotheque cible
+            # (Shared Documents OU lib custom comme "Factures").
+            $firstSegment = ($folder -split '/')[0]
+            $parts        = $folder -split '/', 2
+            $clean        = if ($parts.Count -ge 2) { $parts[1] } else { '' }   # chemin SOUS la lib
+
+            $targetLib = Get-LibraryByName -Connection $Connection -Libraries $libraries -Name $firstSegment
+            $libServer = $targetLib.RootFolder.ServerRelativeUrl.TrimEnd('/')
         }
 
         'Teams-Channel*' {
-            # Canal standard : dossier <Channel>/... DANS la lib du site d'equipe.
-            $clean = $folder -replace '^(Shared Documents|Documents)/', ''
+            # TOUJOURS la lib par defaut. Le TargetFolder commence par le nom du
+            # canal (General/... ou AutreCanal/...) : c'est un chemin DANS la lib.
+            $defaultLib = Get-DefaultDocumentLibrary -Connection $Connection -Libraries $libraries
+            $libServer  = $defaultLib.RootFolder.ServerRelativeUrl.TrimEnd('/')
+            $clean      = $folder
         }
 
         'Teams-Private-Channel' {
-            # Canal prive : site collection dediee (URL deja specifique).
-            $clean = $folder -replace '^(Shared Documents|Documents)/', ''
+            # TOUJOURS la lib par defaut du site dedie. Le TargetFolder ne commence
+            # PAS par "Shared Documents" : c'est directement un chemin DANS la lib.
+            $defaultLib = Get-DefaultDocumentLibrary -Connection $Connection -Libraries $libraries
+            $libServer  = $defaultLib.RootFolder.ServerRelativeUrl.TrimEnd('/')
+            $clean      = $folder
         }
 
         default {
             throw "TargetType inconnu : '$TargetType'"
         }
+    }
+
+    # SITE-relative de la lib = ServerRelative de la lib MOINS le prefixe du web
+    $libSiteRel = $libServer
+    if ($webServer -and $libServer.StartsWith($webServer, [System.StringComparison]::OrdinalIgnoreCase)) {
+        $libSiteRel = $libServer.Substring($webServer.Length).Trim('/')
     }
 
     # Construction des deux representations a partir du SERVER-relative reel
@@ -392,7 +439,7 @@ $results = foreach ($t in $targets) {
         # Resolution de la racine selon le type de cible
         $root = Resolve-TargetRoot -TargetType $t.Type -TargetFolder $t.Folder -Connection $conn
 
-        Write-Log @log_params -Msg "[LIB] $($t.Url)  ->  bibliotheque par defaut : $($root.LibServerRel)" -Type INFO
+        Write-Log @log_params -Msg "[LIB] $($t.Url)  ->  bibliotheque cible : $($root.LibServerRel)" -Type INFO
 
         # --- Garde-fous de securite ---
         if ($root.SiteRelative -eq $root.LibSiteRel) {
