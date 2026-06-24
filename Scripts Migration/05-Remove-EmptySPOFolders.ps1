@@ -16,7 +16,9 @@
         La bibliotheque par defaut est detectee dynamiquement (BaseTemplate 101,
         RootFolder.Name = "Shared Documents"/"Documents"), en EXCLUANT les
         bibliotheques systeme (SiteAssets, Style Library, Form Templates, etc.).
-        Cela gere aussi "Shared Documents" vs "Documents" et les sites multilingues.
+        IMPORTANT : RootFolder est explicitement charge via Get-PnPProperty, car
+        ses sous-proprietes (Name, ServerRelativeUrl) ne sont PAS peuplees par
+        defaut par Get-PnPList.
       - Parcours recursif (post-ordre) du dossier racine resolu.
       - Tout sous-dossier ne contenant aucun fichier (ni direct, ni dans ses
         sous-dossiers) est supprime.
@@ -24,12 +26,12 @@
       - Garde-fous : refus de supprimer la racine de bibliotheque ou un dossier
         "General" (racine de canal Teams).
 
-    IMPORTANT - Gestion des chemins :
+    Gestion des chemins :
       - Get-PnPFolderItem  attend un chemin SITE-relative (ex: "Shared Documents/X").
-      - Remove-PnPFolder   attend un chemin SERVER-relative (ex: "/sites/web/Shared Documents").
-      Le script manipule donc en interne le chemin SITE-relative pour l'enumeration
-      et derive le SERVER-relative (via WebServerRelativeUrl) uniquement pour la
-      suppression.
+      - Get-PnPFolder      attend un chemin SERVER-relative (ex: "/sites/web/Shared Documents/X").
+      - Remove-PnPFolder   attend un chemin SERVER-relative pour -Folder.
+      On derive donc le SITE-relative depuis le SERVER-relative reel
+      (RootFolder.ServerRelativeUrl) en retirant le prefixe WebServerRelativeUrl.
 
     Le mode -WhatIf permet une simulation sans suppression. Un rapport CSV du
     bilan est exporte dans C:\migrationFactory\output.
@@ -161,23 +163,31 @@ foreach ($col in 'TargetType','TargetSPOURL','TargetFolder') {
 # --- 2. Detection de la bibliotheque par defaut ----------------------------
 # SharePoint n'expose pas de propriete "bibliotheque par defaut" et plusieurs
 # bibliotheques partagent BaseTemplate 101 (SiteAssets, Style Library...).
-# On exclut donc les bibliotheques systeme puis on priorise celle dont
+# IMPORTANT : Get-PnPList ne peuple PAS RootFolder ; on force son chargement via
+# Get-PnPProperty, sinon RootFolder.Name et RootFolder.ServerRelativeUrl sont vides.
+# On exclut ensuite les bibliotheques systeme puis on priorise celle dont
 # RootFolder.Name vaut "Shared Documents" ou "Documents".
-# Retourne l'objet liste (avec RootFolder charge).
 function Get-DefaultDocumentLibrary {
     param(
         [Parameter(Mandatory)] $Connection
     )
 
-    $docLibs = Get-PnPList -Connection $Connection -ErrorAction Stop |
-               Where-Object {
-                   $_.BaseTemplate -eq 101 -and
-                   -not $_.Hidden -and
-                   ($ExcludedLibInternalNames -notcontains $_.RootFolder.Name)
-               }
+    $docLibs = @(Get-PnPList -Connection $Connection -ErrorAction Stop |
+                 Where-Object { $_.BaseTemplate -eq 101 -and -not $_.Hidden })
 
     if (-not $docLibs) {
-        throw "Aucune bibliotheque de documents (BaseTemplate 101) exploitable trouvee sur le site."
+        throw "Aucune bibliotheque de documents (BaseTemplate 101) trouvee sur le site."
+    }
+
+    # Force le chargement de RootFolder (Name + ServerRelativeUrl)
+    foreach ($l in $docLibs) {
+        Get-PnPProperty -ClientObject $l -Property RootFolder -Connection $Connection | Out-Null
+    }
+
+    # Exclure les bibliotheques systeme (sur RootFolder.Name desormais peuple)
+    $docLibs = @($docLibs | Where-Object { $ExcludedLibInternalNames -notcontains $_.RootFolder.Name })
+    if (-not $docLibs) {
+        throw "Aucune bibliotheque de documents exploitable (apres exclusion des libs systeme)."
     }
 
     # 1) Priorite : RootFolder.Name = "Shared Documents" ou "Documents"
@@ -196,10 +206,11 @@ function Get-DefaultDocumentLibrary {
 # --- 3. Resolution de la racine selon TargetType ---------------------------
 # Retourne un objet decrivant la racine a nettoyer :
 #   SiteRelative   : chemin SITE-relative   (pour Get-PnPFolderItem)   ex: "Shared Documents/X"
-#   ServerRelative : chemin SERVER-relative (pour Remove-PnPFolder)    ex: "/sites/web/Shared Documents/X"
+#   ServerRelative : chemin SERVER-relative (pour Get-PnPFolder / Remove-PnPFolder)
 #   LibSiteRel     : racine de lib SITE-relative                       ex: "Shared Documents"
+#   LibServerRel   : racine de lib SERVER-relative
 #   WebServerRel   : ServerRelativeUrl du web                          ex: "/sites/web"
-#   Leaf           : dernier segment                                   ex: "X"
+#   Leaf           : dernier segment
 function Resolve-TargetRoot {
     param(
         [Parameter(Mandatory)] [string]$TargetType,
@@ -210,14 +221,17 @@ function Resolve-TargetRoot {
     # Normalise les separateurs (\ -> /), supprime les slashes superflus
     $folder = ($TargetFolder -replace '\\','/' -replace '/+','/').Trim('/')
 
-    $defaultLib  = Get-DefaultDocumentLibrary -Connection $Connection
-    $libServer   = $defaultLib.RootFolder.ServerRelativeUrl.TrimEnd('/')   # ex: /sites/web/Shared Documents
-    $libName     = $defaultLib.RootFolder.Name                              # ex: "Shared Documents"
+    $defaultLib = Get-DefaultDocumentLibrary -Connection $Connection
+    $libServer  = $defaultLib.RootFolder.ServerRelativeUrl.TrimEnd('/')    # ex: /sites/web/Shared Documents
 
-    # ServerRelativeUrl du web (ex: /sites/web), obtenu en retirant le nom de lib
-    # de la fin du chemin server-relative de la lib.
-    $web         = Get-PnPWeb -Connection $Connection -ErrorAction Stop
-    $webServer   = $web.ServerRelativeUrl.TrimEnd('/')                      # ex: /sites/web  (ou "" pour racine)
+    $web       = Get-PnPWeb -Connection $Connection -ErrorAction Stop
+    $webServer = $web.ServerRelativeUrl.TrimEnd('/')                        # ex: /sites/web
+
+    # SITE-relative de la lib = ServerRelative de la lib MOINS le prefixe du web
+    $libSiteRel = $libServer
+    if ($webServer -and $libServer.StartsWith($webServer, [System.StringComparison]::OrdinalIgnoreCase)) {
+        $libSiteRel = $libServer.Substring($webServer.Length).Trim('/')
+    }
 
     switch -Wildcard ($TargetType.Trim()) {
 
@@ -242,10 +256,9 @@ function Resolve-TargetRoot {
         }
     }
 
-    # Construction des deux representations de chemin
-    $siteRel   = ("$libName/$clean"   -replace '/+','/').Trim('/')          # SITE-relative
-    $serverRel = ("$libServer/$clean" -replace '/+','/').TrimEnd('/')       # SERVER-relative
-    $libSiteRel = $libName
+    # Construction des deux representations a partir du SERVER-relative reel
+    $serverRel = ("$libServer/$clean"  -replace '/+','/').TrimEnd('/')      # SERVER-relative
+    $siteRel   = ("$libSiteRel/$clean" -replace '/+','/').Trim('/')         # SITE-relative
 
     [pscustomobject]@{
         SiteRelative   = $siteRel
@@ -393,8 +406,8 @@ $results = foreach ($t in $targets) {
             continue
         }
 
-        # Verifier l'existence de la racine (Get-PnPFolder -Url accepte du site-relative)
-        $rootExists = Get-PnPFolder -Url $root.SiteRelative -Connection $conn -ErrorAction SilentlyContinue
+        # Verifier l'existence de la racine (Get-PnPFolder -Url -> SERVER-relative reel)
+        $rootExists = Get-PnPFolder -Url $root.ServerRelative -Connection $conn -ErrorAction SilentlyContinue
         if (-not $rootExists) {
             Write-Log @log_params -Msg "[SKIP] $($t.Url)  ->  $($root.SiteRelative) inexistant" -Type WARN
             [pscustomobject]@{ Type=$t.Type; Url=$t.Url; Folder=$t.Folder; Root=$root.SiteRelative; Deleted=0; Status='Skipped'; Message='Racine inexistante' }
