@@ -24,6 +24,13 @@
       - Garde-fous : refus de supprimer la racine de bibliotheque ou un dossier
         "General" (racine de canal Teams).
 
+    IMPORTANT - Gestion des chemins :
+      - Get-PnPFolderItem  attend un chemin SITE-relative (ex: "Shared Documents/X").
+      - Remove-PnPFolder   attend un chemin SERVER-relative (ex: "/sites/web/Shared Documents").
+      Le script manipule donc en interne le chemin SITE-relative pour l'enumeration
+      et derive le SERVER-relative (via WebServerRelativeUrl) uniquement pour la
+      suppression.
+
     Le mode -WhatIf permet une simulation sans suppression. Un rapport CSV du
     bilan est exporte dans C:\migrationFactory\output.
 
@@ -156,6 +163,7 @@ foreach ($col in 'TargetType','TargetSPOURL','TargetFolder') {
 # bibliotheques partagent BaseTemplate 101 (SiteAssets, Style Library...).
 # On exclut donc les bibliotheques systeme puis on priorise celle dont
 # RootFolder.Name vaut "Shared Documents" ou "Documents".
+# Retourne l'objet liste (avec RootFolder charge).
 function Get-DefaultDocumentLibrary {
     param(
         [Parameter(Mandatory)] $Connection
@@ -186,8 +194,12 @@ function Get-DefaultDocumentLibrary {
 }
 
 # --- 3. Resolution de la racine selon TargetType ---------------------------
-# Retourne un objet : ServerRelative (chemin server-relative du dossier racine
-# a nettoyer), LibRoot (racine de bibliotheque server-relative), Leaf.
+# Retourne un objet decrivant la racine a nettoyer :
+#   SiteRelative   : chemin SITE-relative   (pour Get-PnPFolderItem)   ex: "Shared Documents/X"
+#   ServerRelative : chemin SERVER-relative (pour Remove-PnPFolder)    ex: "/sites/web/Shared Documents/X"
+#   LibSiteRel     : racine de lib SITE-relative                       ex: "Shared Documents"
+#   WebServerRel   : ServerRelativeUrl du web                          ex: "/sites/web"
+#   Leaf           : dernier segment                                   ex: "X"
 function Resolve-TargetRoot {
     param(
         [Parameter(Mandatory)] [string]$TargetType,
@@ -198,28 +210,31 @@ function Resolve-TargetRoot {
     # Normalise les separateurs (\ -> /), supprime les slashes superflus
     $folder = ($TargetFolder -replace '\\','/' -replace '/+','/').Trim('/')
 
-    $defaultLib = Get-DefaultDocumentLibrary -Connection $Connection
-    $libRoot    = $defaultLib.RootFolder.ServerRelativeUrl.TrimEnd('/')  # ex: /sites/xxx/Shared Documents
+    $defaultLib  = Get-DefaultDocumentLibrary -Connection $Connection
+    $libServer   = $defaultLib.RootFolder.ServerRelativeUrl.TrimEnd('/')   # ex: /sites/web/Shared Documents
+    $libName     = $defaultLib.RootFolder.Name                              # ex: "Shared Documents"
+
+    # ServerRelativeUrl du web (ex: /sites/web), obtenu en retirant le nom de lib
+    # de la fin du chemin server-relative de la lib.
+    $web         = Get-PnPWeb -Connection $Connection -ErrorAction Stop
+    $webServer   = $web.ServerRelativeUrl.TrimEnd('/')                      # ex: /sites/web  (ou "" pour racine)
 
     switch -Wildcard ($TargetType.Trim()) {
 
         'SharePoint' {
             # Le TargetFolder contient DEJA "Shared Documents/..." ou "Documents/..."
             # -> on retire le prefixe lib s'il est present pour eviter le doublon.
-            $clean   = $folder -replace '^(Shared Documents|Documents)/', ''
-            $server  = "$libRoot/$clean"
+            $clean = $folder -replace '^(Shared Documents|Documents)/', ''
         }
 
         'Teams-Channel*' {
             # Canal standard : dossier <Channel>/... DANS la lib du site d'equipe.
-            $clean  = $folder -replace '^(Shared Documents|Documents)/', ''
-            $server = "$libRoot/$clean"
+            $clean = $folder -replace '^(Shared Documents|Documents)/', ''
         }
 
         'Teams-Private-Channel' {
             # Canal prive : site collection dediee (URL deja specifique).
-            $clean  = $folder -replace '^(Shared Documents|Documents)/', ''
-            $server = "$libRoot/$clean"
+            $clean = $folder -replace '^(Shared Documents|Documents)/', ''
         }
 
         default {
@@ -227,22 +242,32 @@ function Resolve-TargetRoot {
         }
     }
 
-    $server = ($server -replace '/+','/').TrimEnd('/')
+    # Construction des deux representations de chemin
+    $siteRel   = ("$libName/$clean"   -replace '/+','/').Trim('/')          # SITE-relative
+    $serverRel = ("$libServer/$clean" -replace '/+','/').TrimEnd('/')       # SERVER-relative
+    $libSiteRel = $libName
+
     [pscustomobject]@{
-        ServerRelative = $server
-        LibRoot        = $libRoot
-        Leaf           = ($server -split '/')[-1]
+        SiteRelative   = $siteRel
+        ServerRelative = $serverRel
+        LibSiteRel     = $libSiteRel
+        LibServerRel   = $libServer
+        WebServerRel   = $webServer
+        Leaf           = ($siteRel -split '/')[-1]
     }
 }
 
 # --- 4. Fonction recursive : suppression des sous-dossiers vides -----------
+# Travaille en chemin SITE-relative pour Get-PnPFolderItem.
+# Pour Remove-PnPFolder (qui exige du SERVER-relative), on prefixe WebServerRel.
 # Un SEUL appel Get-PnPFolderItem par dossier (fichiers + dossiers), puis tri
 # local. Decremente le compteur d'enfants au fil des suppressions plutot que de
 # relire le serveur.
 function Remove-EmptySubFolders {
     param(
         [Parameter(Mandatory)] $Connection,
-        [Parameter(Mandatory)] [string]$FolderServerRelativeUrl,
+        [Parameter(Mandatory)] [string]$FolderSiteRelativeUrl,
+        [Parameter(Mandatory)] [string]$WebServerRelativeUrl,
         [Parameter(Mandatory)] [bool]$IsRoot,
         [Parameter(Mandatory)] [bool]$Simulate,
         [Parameter(Mandatory)] [string]$SiteUrl
@@ -250,15 +275,15 @@ function Remove-EmptySubFolders {
 
     $deletedCount = 0
 
-    # Lister TOUS les items (un seul appel reseau)
+    # Lister TOUS les items (un seul appel reseau) - chemin SITE-relative
     $items = @()
     try {
-        $items = Get-PnPFolderItem -FolderSiteRelativeUrl $FolderServerRelativeUrl `
+        $items = Get-PnPFolderItem -FolderSiteRelativeUrl $FolderSiteRelativeUrl `
                                    -Connection $Connection `
                                    -ErrorAction Stop |
                  Where-Object { $_.Name -and $_.Name -ne 'Forms' }
     } catch {
-        Write-Log @log_params -Msg "[WARN] $SiteUrl  ->  $FolderServerRelativeUrl : enumeration impossible ($($_.Exception.Message))" -Type WARN
+        Write-Log @log_params -Msg "[WARN] $SiteUrl  ->  $FolderSiteRelativeUrl : enumeration impossible ($($_.Exception.Message))" -Type WARN
         return 0
     }
 
@@ -269,16 +294,17 @@ function Remove-EmptySubFolders {
     $childFolderCount = $folders.Count
 
     foreach ($child in $folders) {
-        $childPath = "$FolderServerRelativeUrl/$($child.Name)"
+        $childSiteRel = "$FolderSiteRelativeUrl/$($child.Name)"
         $childDeleted = Remove-EmptySubFolders -Connection $Connection `
-                                               -FolderServerRelativeUrl $childPath `
+                                               -FolderSiteRelativeUrl $childSiteRel `
+                                               -WebServerRelativeUrl $WebServerRelativeUrl `
                                                -IsRoot $false `
                                                -Simulate $Simulate `
                                                -SiteUrl $SiteUrl
         $deletedCount += $childDeleted
 
         # Si l'enfant direct a ete supprime, on le retire du compte local.
-        if ($childDeleted -gt 0 -and (Test-ChildDeleted -Connection $Connection -ChildPath $childPath)) {
+        if ($childDeleted -gt 0 -and (Test-ChildDeleted -Connection $Connection -ChildSiteRel $childSiteRel)) {
             $childFolderCount--
         }
     }
@@ -291,21 +317,23 @@ function Remove-EmptySubFolders {
     # Le dossier courant est vide si : aucun fichier ET plus aucun sous-dossier.
     if ($files.Count -eq 0 -and $childFolderCount -le 0) {
         if ($Simulate) {
-            Write-Log @log_params -Msg "[WHATIF] $SiteUrl  ->  $FolderServerRelativeUrl serait supprime" -Type INFO
+            Write-Log @log_params -Msg "[WHATIF] $SiteUrl  ->  $FolderSiteRelativeUrl serait supprime" -Type INFO
             $deletedCount++
         } else {
-            $leaf   = ($FolderServerRelativeUrl -split '/')[-1]
-            $parent = $FolderServerRelativeUrl.Substring(0, $FolderServerRelativeUrl.LastIndexOf('/'))
+            $leaf            = ($FolderSiteRelativeUrl -split '/')[-1]
+            $parentSiteRel   = $FolderSiteRelativeUrl.Substring(0, $FolderSiteRelativeUrl.LastIndexOf('/'))
+            # Remove-PnPFolder -Folder attend du SERVER-relative
+            $parentServerRel = ("$WebServerRelativeUrl/$parentSiteRel" -replace '/+','/').TrimEnd('/')
             try {
                 Remove-PnPFolder -Name $leaf `
-                                 -Folder $parent `
+                                 -Folder $parentServerRel `
                                  -Connection $Connection `
                                  -Force `
                                  -ErrorAction Stop
-                Write-Log @log_params -Msg "[DEL] $SiteUrl  ->  $FolderServerRelativeUrl supprime" -Type INFO
+                Write-Log @log_params -Msg "[DEL] $SiteUrl  ->  $FolderSiteRelativeUrl supprime" -Type INFO
                 $deletedCount++
             } catch {
-                Write-Log @log_params -Msg "[KO] $SiteUrl  ->  $FolderServerRelativeUrl : $($_.Exception.Message)" -Type ERROR
+                Write-Log @log_params -Msg "[KO] $SiteUrl  ->  $FolderSiteRelativeUrl : $($_.Exception.Message)" -Type ERROR
             }
         }
     }
@@ -314,12 +342,13 @@ function Remove-EmptySubFolders {
 }
 
 # Verifie qu'un dossier n'existe plus (apres tentative de suppression).
+# Get-PnPFolder -Url accepte un chemin SITE-relative.
 function Test-ChildDeleted {
     param(
         [Parameter(Mandatory)] $Connection,
-        [Parameter(Mandatory)] [string]$ChildPath
+        [Parameter(Mandatory)] [string]$ChildSiteRel
     )
-    $exists = Get-PnPFolder -Url $ChildPath -Connection $Connection -ErrorAction SilentlyContinue
+    $exists = Get-PnPFolder -Url $ChildSiteRel -Connection $Connection -ErrorAction SilentlyContinue
     return (-not $exists)
 }
 
@@ -350,43 +379,44 @@ $results = foreach ($t in $targets) {
         # Resolution de la racine selon le type de cible
         $root = Resolve-TargetRoot -TargetType $t.Type -TargetFolder $t.Folder -Connection $conn
 
-        Write-Log @log_params -Msg "[LIB] $($t.Url)  ->  bibliotheque par defaut : $($root.LibRoot)" -Type INFO
+        Write-Log @log_params -Msg "[LIB] $($t.Url)  ->  bibliotheque par defaut : $($root.LibServerRel)" -Type INFO
 
         # --- Garde-fous de securite ---
-        if ($root.ServerRelative -eq $root.LibRoot) {
-            Write-Log @log_params -Msg "[SKIP-SECURITE] $($t.Url)  ->  racine de bibliotheque protegee ($($root.ServerRelative))" -Type WARN
-            [pscustomobject]@{ Type=$t.Type; Url=$t.Url; Folder=$t.Folder; Root=$root.ServerRelative; Deleted=0; Status='Skipped'; Message='Racine de bibliotheque protegee' }
+        if ($root.SiteRelative -eq $root.LibSiteRel) {
+            Write-Log @log_params -Msg "[SKIP-SECURITE] $($t.Url)  ->  racine de bibliotheque protegee ($($root.SiteRelative))" -Type WARN
+            [pscustomobject]@{ Type=$t.Type; Url=$t.Url; Folder=$t.Folder; Root=$root.SiteRelative; Deleted=0; Status='Skipped'; Message='Racine de bibliotheque protegee' }
             continue
         }
         if ($ProtectedLeafNames -contains $root.Leaf) {
-            Write-Log @log_params -Msg "[SKIP-SECURITE] $($t.Url)  ->  dossier protege '$($root.Leaf)' ($($root.ServerRelative))" -Type WARN
-            [pscustomobject]@{ Type=$t.Type; Url=$t.Url; Folder=$t.Folder; Root=$root.ServerRelative; Deleted=0; Status='Skipped'; Message="Dossier protege '$($root.Leaf)'" }
+            Write-Log @log_params -Msg "[SKIP-SECURITE] $($t.Url)  ->  dossier protege '$($root.Leaf)' ($($root.SiteRelative))" -Type WARN
+            [pscustomobject]@{ Type=$t.Type; Url=$t.Url; Folder=$t.Folder; Root=$root.SiteRelative; Deleted=0; Status='Skipped'; Message="Dossier protege '$($root.Leaf)'" }
             continue
         }
 
-        # Verifier l'existence de la racine
-        $rootExists = Get-PnPFolder -Url $root.ServerRelative -Connection $conn -ErrorAction SilentlyContinue
+        # Verifier l'existence de la racine (Get-PnPFolder -Url accepte du site-relative)
+        $rootExists = Get-PnPFolder -Url $root.SiteRelative -Connection $conn -ErrorAction SilentlyContinue
         if (-not $rootExists) {
-            Write-Log @log_params -Msg "[SKIP] $($t.Url)  ->  $($root.ServerRelative) inexistant" -Type WARN
-            [pscustomobject]@{ Type=$t.Type; Url=$t.Url; Folder=$t.Folder; Root=$root.ServerRelative; Deleted=0; Status='Skipped'; Message='Racine inexistante' }
+            Write-Log @log_params -Msg "[SKIP] $($t.Url)  ->  $($root.SiteRelative) inexistant" -Type WARN
+            [pscustomobject]@{ Type=$t.Type; Url=$t.Url; Folder=$t.Folder; Root=$root.SiteRelative; Deleted=0; Status='Skipped'; Message='Racine inexistante' }
             continue
         }
 
-        Write-Log @log_params -Msg "[..] $($t.Url)  ->  parcours de $($root.ServerRelative)" -Type INFO
+        Write-Log @log_params -Msg "[..] $($t.Url)  ->  parcours de $($root.SiteRelative)" -Type INFO
 
         $deleted = Remove-EmptySubFolders -Connection $conn `
-                                          -FolderServerRelativeUrl $root.ServerRelative `
+                                          -FolderSiteRelativeUrl $root.SiteRelative `
+                                          -WebServerRelativeUrl $root.WebServerRel `
                                           -IsRoot $true `
                                           -Simulate $simulate `
                                           -SiteUrl $t.Url
 
-        Write-Log @log_params -Msg "[OK] $($t.Url)  ->  $($root.ServerRelative) : $deleted dossier(s) vide(s)" -Type INFO
+        Write-Log @log_params -Msg "[OK] $($t.Url)  ->  $($root.SiteRelative) : $deleted dossier(s) vide(s)" -Type INFO
 
         [pscustomobject]@{
             Type    = $t.Type
             Url     = $t.Url
             Folder  = $t.Folder
-            Root    = $root.ServerRelative
+            Root    = $root.SiteRelative
             Deleted = $deleted
             Status  = 'Done'
             Message = ''
