@@ -1,4 +1,3 @@
 CheminUNC;NomFileShare;TypeUsage;CibleM365;Owner;EmailOwner;Description
-\\ntx-pa-fs01.primagaz.fr\SYNTACT_Archives;SYNTACT_Archives;Archive;SharePoint;A_DEFINIR;a.definir@primagaz.fr;SYNTACT_Archives
-\\ntx-pa-fs01.primagaz.fr\Test_Migration;Test_Migration;Collaboratif;SharePoint;A_DEFINIR;a.definir@primagaz.fr;Test_Migration
-\\ntx-pa-fs01.primagaz.fr\users$;Users_HomeDirs;Personnel;OneDrive;A_DEFINIR;a.definir@primagaz.fr;Home directories utilisateurs (share caché)
+\\fileserver.contoso.local\Archives;Archives;Archive;SharePoint;Equipe Archivage;archives.owner@example.invalid;Exemple post-traitement ou lot spécifique
+\\fileserver.contoso.local\Users$;HomeDirectories;Personnel;OneDrive;Equipe Workplace;workplace@example.invalid;Répertoires personnels utilisateurs

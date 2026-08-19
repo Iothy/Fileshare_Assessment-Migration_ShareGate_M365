@@ -1,6 +1,62 @@
-.\Get-FileShareInventory-WithLastAccess.ps1 -MappingCsv ".\Config\FileShareMappingByOU_Resume.csv" -IncludeFileDetail
-.\Get-FileSharePermissions.ps1 -MappingCsv ".\Config\FileShareMappingByOU_Resume.csv" -ThrottleLimit 1
-.\Get-BlockedExtensions.ps1 -MappingCsv ".\Config\FileShareMappingByOU_Resume.csv"
-.\Get-DuplicateFiles.ps1 -MappingCsv ".\Config\FileShareMappingByOU_Resume.csv"
-.\Get-InvalidCharacters.ps1 -MappingCsv ".\Config\FileShareMappingByOU_Resume.csv"
-.\Get-PathTooLong.ps1 -MappingCsv ".\Config\FileShareMappingByOU_Resume.csv" -LongueurMax 400
+﻿<#
+.SYNOPSIS
+Point d'entrée standardisé pour lancer un assessment complet.
+
+.DESCRIPTION
+Charge le module FileShareAssessment et exécute les scripts historiques activés
+à partir d'un fichier de configuration JSON explicite.
+
+.PARAMETER ConfigurationPath
+Chemin du fichier de configuration JSON. Par défaut : .\Config\FileShareAssessment.json.
+
+.PARAMETER Credential
+Credential SMB optionnel à transmettre aux scripts historiques qui l'acceptent.
+
+.PARAMETER Server
+Nom du serveur SMB à transmettre aux scripts historiques qui l'acceptent.
+
+.PARAMETER PassThru
+Retourne le détail du run créé.
+
+.EXAMPLE
+.\Start-Assessment.ps1 -ConfigurationPath '.\Config\FileShareAssessment.json'
+#>
+[CmdletBinding(SupportsShouldProcess = $true)]
+param(
+    [Parameter()]
+    [ValidateNotNullOrEmpty()]
+    [string]$ConfigurationPath = (Join-Path -Path $PSScriptRoot -ChildPath 'Config/FileShareAssessment.json'),
+
+    [Parameter()]
+    [System.Management.Automation.PSCredential]
+    [System.Management.Automation.Credential()]
+    $Credential,
+
+    [Parameter()]
+    [string]$Server,
+
+    [Parameter()]
+    [switch]$PassThru
+)
+
+$modulePath = Join-Path -Path $PSScriptRoot -ChildPath 'FileShareAssessment/FileShareAssessment.psd1'
+Import-Module -Name $modulePath -Force -ErrorAction Stop
+
+$invokeParameters = @{
+    ConfigurationPath = $ConfigurationPath
+    PassThru = $PassThru
+}
+
+if ($PSBoundParameters.ContainsKey('Credential')) {
+    $invokeParameters.Credential = $Credential
+}
+
+if ($PSBoundParameters.ContainsKey('Server')) {
+    $invokeParameters.Server = $Server
+}
+
+if ($WhatIfPreference) {
+    $invokeParameters.WhatIf = $true
+}
+
+Invoke-FileShareAssessment @invokeParameters

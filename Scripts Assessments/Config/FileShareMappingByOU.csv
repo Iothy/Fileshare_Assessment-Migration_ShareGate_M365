@@ -1,15 +1,3 @@
 CheminUNC;NomFileShare;TypeUsage;CibleM365;Owner;EmailOwner;Description
-\\ntx-pa-fs01.primagaz.fr\EQUIPE\Juridique;Juridique;Collaboratif;SharePoint;A_DEFINIR;a.definir@primagaz.fr;Partage lié à Juridique
-\\ntx-pa-fs01.primagaz.fr\PROJET\DRH_2;DRH;Collaboratif;SharePoint;A_DEFINIR;a.definir@primagaz.fr;Partage lié à DRH
-\\ntx-pa-fs01.primagaz.fr\EQUIPE\DAF-Ctl;DAF-Ctl;Collaboratif;SharePoint;A_DEFINIR;a.definir@primagaz.fr;Partage lié à DAF-Ctl
-\\ntx-pa-fs01.primagaz.fr\EQUIPE\Ctl-DRH;Ctl-DRH;Collaboratif;SharePoint;A_DEFINIR;a.definir@primagaz.fr;Partage lié à Ctl-DRH
-\\ntx-pa-fs01.primagaz.fr\PROJET\Supply;Supply;Collaboratif;SharePoint;A_DEFINIR;a.definir@primagaz.fr;Partage lié à Supply
-\\ntx-pa-fs01.primagaz.fr\PROJET\Daf-Compta-clts;Daf-Compta-clts;Collaboratif;SharePoint;A_DEFINIR;a.definir@primagaz.fr;Partage lié à Daf-Compta-clts
-\\ntx-pa-fs01.primagaz.fr\PROJET\Daf-Compta-G;Daf-Compta-G;Collaboratif;SharePoint;A_DEFINIR;a.definir@primagaz.fr;Partage lié à Daf-Compta-G
-\\ntx-pa-fs01.primagaz.fr\PART_GR_SPDC\Daf-Compta-Frs;Daf-Compta-Frs;Collaboratif;SharePoint;A_DEFINIR;a.definir@primagaz.fr;Partage lié à Daf-Compta-Frs
-\\ntx-pa-fs01.primagaz.fr\PART_GR_SPDC\Daf-Compta-Frs_RESTORED_20240410_135946;Daf-Compta-Frs_RESTORED;Collaboratif;SharePoint;A_DEFINIR;a.definir@primagaz.fr;Partage lié à Daf-Compta-Frs_RESTORED
-\\ntx-pa-fs01.primagaz.fr\PROJET\Compta_DRH;Compta_DRH;Collaboratif;SharePoint;A_DEFINIR;a.definir@primagaz.fr;Partage lié à Compta_DRH
-\\ntx-pa-fs01.primagaz.fr\EQUIPE\Daf-Comptabilite;Daf-Comptabilite;Collaboratif;SharePoint;A_DEFINIR;a.definir@primagaz.fr;Partage lié à Daf-Comptabilite
-\\ntx-pa-fs01.primagaz.fr\PROJET\Daf-Filiales;Daf-Filiales;Collaboratif;SharePoint;A_DEFINIR;a.definir@primagaz.fr;Partage lié à Daf-Filiales
-\\ntx-pa-fs01.primagaz.fr\PART_GR_SPDC\HSE 2015;HSE_2025;Collaboratif;SharePoint;A_DEFINIR;a.definir@primagaz.fr;Partage lié à HSE_2025
-\\ntx-pa-fs01.primagaz.fr\PART_GR_SPDC\HSE;HSE;Collaboratif;SharePoint;A_DEFINIR;a.definir@primagaz.fr;Partage lié à HSE
+\\fileserver.contoso.local\Direction\Finance;Finance;Collaboratif;SharePoint;Equipe Finance;finance.owner@example.invalid;Exemple de découpage par OU ou direction
+\\fileserver.contoso.local\Direction\RH;RessourcesHumaines;Collaboratif;SharePoint;Equipe RH;rh.owner@example.invalid;Exemple de découpage par OU ou direction
