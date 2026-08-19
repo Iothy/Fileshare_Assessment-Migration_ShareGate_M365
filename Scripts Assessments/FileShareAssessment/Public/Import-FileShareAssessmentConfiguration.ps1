@@ -23,7 +23,7 @@ function Import-FileShareAssessmentConfiguration {
 
     $resolvedConfigurationPath = Resolve-Path -Path $ConfigurationPath -ErrorAction Stop | Select-Object -ExpandProperty Path
     $configurationDirectory = Split-Path -Path $resolvedConfigurationPath -Parent
-    $rawConfiguration = Get-Content -Path $resolvedConfigurationPath -Raw -Encoding UTF8 | ConvertFrom-Json -Depth 20
+    $rawConfiguration = Get-Content -Path $resolvedConfigurationPath -Raw -Encoding UTF8 | ConvertFrom-Json
 
     if ($null -eq $rawConfiguration.assessment) {
         throw "La section 'assessment' est obligatoire dans $resolvedConfigurationPath."

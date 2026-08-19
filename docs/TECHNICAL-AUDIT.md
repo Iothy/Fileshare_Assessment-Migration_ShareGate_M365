@@ -18,7 +18,7 @@
 
 ### Amélioration
 
-1. Ajouter à terme un vrai découpage en fonctions privées/publices pour les scripts métier volumineux.
+1. Ajouter à terme un vrai découpage en fonctions privées/publiques pour les scripts métier volumineux.
 2. Introduire des objets de sortie plus structurés et des codes d'état homogènes.
 3. Mieux isoler les heuristiques spécifiques au reporting HTML dans des composants dédiés.
 4. Étendre les tests unitaires aux fonctions métier communes après extraction.
