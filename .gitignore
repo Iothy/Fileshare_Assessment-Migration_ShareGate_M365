@@ -2,6 +2,7 @@
 .vscode/
 TestResults/
 .PSScriptAnalyzerResults/
+testResults.xml
 
 # Assessment outputs and logs
 Scripts Assessments/Output/
