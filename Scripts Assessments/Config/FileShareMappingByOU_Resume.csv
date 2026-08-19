@@ -1,2 +1,2 @@
 CheminUNC;NomFileShare;TypeUsage;CibleM365;Owner;EmailOwner;Description
-\\ntx-pa-fs01.primagaz.fr\EQUIPE\Daf-Ctl;Daf-Ctl;Collaboratif;SharePoint;A_DEFINIR;a.definir@primagaz.fr;Partage lié à Daf-Ctl
+\\fileserver.contoso.local\Direction\Finance;Finance;Collaboratif;SharePoint;Equipe Finance;finance.owner@example.invalid;Exemple de mapping synthétique

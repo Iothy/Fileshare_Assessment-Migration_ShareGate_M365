@@ -1,0 +1,17 @@
+# PowerShell / editor
+.vscode/
+TestResults/
+.PSScriptAnalyzerResults/
+
+# Assessment outputs and logs
+Scripts Assessments/Output/
+Scripts Assessments/_Reports/
+Scripts Assessments/**/*.log
+Scripts Assessments/**/*.tmp
+Scripts Assessments/**/*.bak
+
+# Local or sensitive configuration copies
+Scripts Assessments/Config/*.local.json
+Scripts Assessments/Config/*.local.csv
+Scripts Assessments/Config/*-local.json
+Scripts Assessments/Config/*-local.csv

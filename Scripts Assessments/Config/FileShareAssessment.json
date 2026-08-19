@@ -1,0 +1,67 @@
+{
+  "assessment": {
+    "name": "Assessment-FileShare-Exemple",
+    "scope": "sample-assessment",
+    "mappingCsv": "./FileShareMapping.example.csv",
+    "outputRoot": "../Output",
+    "server": "fileserver.contoso.local"
+  },
+  "executionOrder": [
+    "inventory",
+    "permissions",
+    "blockedExtensions",
+    "duplicateFiles",
+    "pathTooLong",
+    "report"
+  ],
+  "controls": {
+    "inventory": {
+      "enabled": true,
+      "description": "Inventaire global avec option de détail fichier.",
+      "script": "../Get-FileShareInventory-WithLastAccess.ps1",
+      "parameters": {
+        "IncludeFileDetail": true,
+        "FileDetailMinSizeMB": 1
+      }
+    },
+    "permissions": {
+      "enabled": true,
+      "description": "Export des permissions NTFS.",
+      "script": "../Get-FileSharePermissions.ps1",
+      "parameters": {
+        "ThrottleLimit": 1
+      }
+    },
+    "blockedExtensions": {
+      "enabled": true,
+      "description": "Détection des extensions à auditer avant migration.",
+      "script": "../Get-BlockedExtensions.ps1",
+      "parameters": {}
+    },
+    "duplicateFiles": {
+      "enabled": true,
+      "description": "Détection des doublons selon la configuration.",
+      "script": "../Get-DuplicateFiles.ps1",
+      "parameters": {
+        "MinSizeMB": 50,
+        "Algorithm": "SHA256"
+      }
+    },
+    "pathTooLong": {
+      "enabled": true,
+      "description": "Détection des chemins trop longs pour la cible M365.",
+      "script": "../Get-PathTooLong.ps1",
+      "parameters": {
+        "LongueurMax": 400,
+        "UrlPrefixLength": 72
+      }
+    },
+    "report": {
+      "enabled": true,
+      "description": "Génération du rapport HTML final.",
+      "script": "../Export-AssessmentReport.ps1",
+      "mappingParameter": "FileShareMapping",
+      "parameters": {}
+    }
+  }
+}

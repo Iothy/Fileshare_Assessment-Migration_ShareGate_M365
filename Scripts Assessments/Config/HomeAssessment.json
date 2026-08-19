@@ -1,79 +1,72 @@
 {
-    "_metadata": {
-        "description": "Configuration des seuils pour l'assessment des dossiers personnels (Home Directories)",
-        "projet": "PrimaGAZ - Migration FileShare vers M365",
-        "derniere_modification": "",
-        "modifie_par": ""
-    },
-    "ownership": {
-        "description": "Paramètres pour Get-HomeDirectoryOwnership.ps1",
-        "inactivity_threshold_days": 180,
-        "inactivity_threshold_days_comment": "Nombre de jours sans connexion AD pour considérer un compte comme inactif (défaut: 180 = 6 mois)",
-        "technical_folder_patterns": [
-            "^_",
-            "^public$",
-            "^commun",
-            "^profil",
-            "^svc[-_]",
-            "^adm[-_]",
-            "^\\$",
-            "^default",
-            "^template",
-            "^test[-_]?"
-        ],
-        "technical_folder_patterns_comment": "Regex patterns pour détecter les dossiers techniques/non-utilisateur",
-        "service_account_ou_patterns": [
-            "OU=Services",
-            "OU=Comptes de service",
-            "OU=Service Accounts"
-        ],
-        "service_account_ou_patterns_comment": "Patterns d'OU Active Directory pour détecter les comptes de service",
-        "ad_search_properties": [
-            "Department",
-            "Manager",
-            "LastLogonDate",
-            "Enabled",
-            "Mail",
-            "UserPrincipalName",
-            "DisplayName",
-            "Title",
-            "DistinguishedName",
-            "WhenCreated"
-        ],
-        "ad_search_properties_comment": "Propriétés AD à récupérer pour chaque compte (ajustable selon l'environnement client)"
-    },
-    "stats": {
-        "description": "Paramètres pour Get-HomeDirectoryStats.ps1",
-        "activity_categories": [
-            {
-                "name": "Actif",
-                "emoji": "🟢",
-                "max_days_since_last_modified": 180,
-                "recommendation": "Migrer vers OneDrive"
-            },
-            {
-                "name": "Semi-actif",
-                "emoji": "🟡",
-                "max_days_since_last_modified": 730,
-                "recommendation": "Migrer mais valider avec l'owner"
-            },
-            {
-                "name": "Dormant",
-                "emoji": "🟠",
-                "max_days_since_last_modified": 1825,
-                "recommendation": "Archiver ou supprimer ? Décision owner/manager"
-            },
-            {
-                "name": "Abandonné",
-                "emoji": "🔴",
-                "max_days_since_last_modified": 999999,
-                "recommendation": "Ne pas migrer — archiver ou purger"
-            }
-        ],
-        "activity_categories_comment": "Catégories d'activité basées sur la date du fichier le plus récent. max_days = borne supérieure en jours. L'ordre est important : la première catégorie matchée est utilisée.",
-        "empty_folder_threshold_mb": 1,
-        "empty_folder_threshold_mb_comment": "Seuil en MB en dessous duquel un dossier est considéré comme vide (défaut: 1 MB)",
-        "large_home_threshold_gb": 20,
-        "large_home_threshold_gb_comment": "Seuil en GB au-dessus duquel un home est signalé comme volumineux (défaut: 20 GB)"
-    }
+  "_metadata": {
+    "description": "Configuration d'exemple pour l'analyse de répertoires personnels avant migration.",
+    "projet": "FileShareAssessment",
+    "derniere_modification": "",
+    "modifie_par": ""
+  },
+  "ownership": {
+    "description": "Paramètres d'identification des owners de home directories.",
+    "inactivity_threshold_days": 180,
+    "technical_folder_patterns": [
+      "^_",
+      "^public$",
+      "^commun",
+      "^profil",
+      "^svc[-_]",
+      "^adm[-_]",
+      "^\\$",
+      "^default",
+      "^template",
+      "^test[-_]?"
+    ],
+    "service_account_ou_patterns": [
+      "OU=Services",
+      "OU=Comptes de service",
+      "OU=Service Accounts"
+    ],
+    "ad_search_properties": [
+      "Department",
+      "Manager",
+      "LastLogonDate",
+      "Enabled",
+      "Mail",
+      "UserPrincipalName",
+      "DisplayName",
+      "Title",
+      "DistinguishedName",
+      "WhenCreated"
+    ]
+  },
+  "stats": {
+    "description": "Paramètres de catégorisation de l'activité des dossiers personnels.",
+    "activity_categories": [
+      {
+        "name": "Actif",
+        "emoji": "🟢",
+        "max_days_since_last_modified": 180,
+        "recommendation": "Migrer vers OneDrive"
+      },
+      {
+        "name": "Semi-actif",
+        "emoji": "🟡",
+        "max_days_since_last_modified": 730,
+        "recommendation": "Migrer mais valider avec l'owner"
+      },
+      {
+        "name": "Dormant",
+        "emoji": "🟠",
+        "max_days_since_last_modified": 1825,
+        "recommendation": "Archiver ou supprimer selon décision métier"
+      },
+      {
+        "name": "Abandonné",
+        "emoji": "🔴",
+        "max_days_since_last_modified": 999999,
+        "recommendation": "Ne pas migrer, archiver ou purger"
+      }
+    ],
+    "empty_folder_threshold_mb": 1,
+    "large_home_threshold_gb": 20
+  }
 }
