@@ -618,7 +618,8 @@ process {
             }
 
             # Détection des dossiers dépassant le List View Threshold (> 5000 éléments directs)
-                $dossiersLVT = $statsN1.LVTFolders.GetEnumerator() | Where-Object { $_.Value -gt $seuilLVT }
+            $seuilLVT = 5000
+            $dossiersLVT = $statsN1.LVTFolders.GetEnumerator() | Where-Object { $_.Value -gt $seuilLVT }
             $nbDossiersLVT = ($dossiersLVT | Measure-Object).Count
             if ($nbDossiersLVT -gt 0) {
                 Write-Log "Dossiers dépassant le List View Threshold ($seuilLVT items directs) sur $nomFS : $nbDossiersLVT" "WARN"
