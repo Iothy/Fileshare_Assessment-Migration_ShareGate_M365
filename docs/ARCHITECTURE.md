@@ -21,9 +21,11 @@ La phase 1 encapsule les scripts historiques existants au lieu de les réécrire
 - exécute les scripts activés dans l'ordre défini ;
 - enregistre un manifest et un historique de run.
 
-Le mapping d'entrée est désormais réduit à 6 colonnes métier. Les métadonnées historiques (`NomFileShare`, `TypeUsage`, `Owner`, etc.) ne sont plus stockées dans le CSV : elles sont dérivées du `SourcePath` au moment de l'import.
+Le mapping d'entrée est désormais réduit à 6 colonnes métier. Seul `SourcePath` est obligatoire pour l'assessment général ; les champs de destination peuvent rester vides tant que la cible M365 n'est pas décidée. Les métadonnées historiques (`NomFileShare`, `TypeUsage`, `Owner`, etc.) ne sont plus stockées dans le CSV : elles sont dérivées du `SourcePath` au moment de l'import.
 
 `SourceIdentifier` est calculé à partir du chemin UNC complet, rendu compatible système de fichiers et suffixé par un hash court uniquement en cas de collision.
+
+Le contrôle `Get-PathTooLong.ps1` dépend de `TargetSPOURL` : il produit un statut `Skipped` sans verdict si la cible est absente. Sinon, il calcule la longueur cible SharePoint Online décodée complète (limite 400 caractères selon la documentation Microsoft OneDrive/SharePoint) et la compatibilité Windows/Office sur un budget relatif projet configurable (`256 - 96 = 160` par défaut, l'estimation 96 n'étant pas une limite Microsoft).
 
 ## Sorties
 

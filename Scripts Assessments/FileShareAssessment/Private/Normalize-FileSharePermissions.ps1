@@ -6,7 +6,7 @@ function Normalize-FileSharePermissions {
     )
 
     if ([string]::IsNullOrWhiteSpace($Value)) {
-        throw 'La colonne Permissions est obligatoire.'
+        return ''
     }
 
     switch -Regex ($Value.Trim()) {

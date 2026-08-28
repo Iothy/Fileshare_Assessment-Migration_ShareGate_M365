@@ -51,6 +51,21 @@ Describe 'FileShare mapping simplifié' {
         $rows[0].TargetFolder | Should -Be 'General/Archive/Migration'
     }
 
+    It 'accepte un mapping avec uniquement SourcePath renseigné' {
+        $folder = New-TestFolder
+        $path = New-MappingFile -Folder $folder -Rows @(
+            '\\Fileshare\RH\Paie;;;;;'
+        )
+
+        $rows = Import-FileShareMapping -Path $path
+
+        $rows.Count | Should -Be 1
+        $rows[0].SourcePath | Should -Be '\\Fileshare\RH\Paie'
+        $rows[0].TargetSPOURL | Should -Be ''
+        $rows[0].TargetType | Should -Be ''
+        $rows[0].Permissions | Should -Be ''
+    }
+
     It '\\Fileshare\RH\Paie produit Fileshare_RH_Paie' {
         $folder = New-TestFolder
         $path = New-MappingFile -Folder $folder -Rows @(

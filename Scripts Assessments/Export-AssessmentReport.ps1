@@ -165,6 +165,18 @@ function Build-StatusBadge {
     return '<span class="badge {0}">{1}</span>' -f $css, (HtmlEnc $Status)
 }
 
+function Get-PathTooLongStatus {
+    param(
+        [string]$Path,
+        [array]$Rows
+    )
+
+    if (-not (Test-Path $Path)) { return 'Failed' }
+    if (@($Rows).Count -eq 0) { return 'Success' }
+    if (@($Rows | Where-Object { $_.StatutControle -eq 'Skipped' }).Count -eq @($Rows).Count) { return 'Skipped' }
+    return 'Partial'
+}
+
 function Build-HtmlDocument {
     param(
         [Parameter(Mandatory)][string]$Title,
@@ -401,14 +413,15 @@ foreach ($source in $mappingRows) {
 
     $summary = Get-InventorySummary -InventoryRows $inventoryRows -SummaryRows $summaryRows
     $warningCount = @($extensionsRows).Count + @($doublonsRows).Count + @($accessRows | Where-Object { $_.TypeErreur -eq 'AccessDenied' }).Count
-    $errorCount = @($cheminsRows).Count + @($accessRows | Where-Object { $_.TypeErreur -and $_.TypeErreur -ne 'AccessDenied' }).Count
+    $pathTooLongIssueCount = @($cheminsRows | Where-Object { $_.StatutControle -ne 'Skipped' }).Count
+    $errorCount = $pathTooLongIssueCount + @($accessRows | Where-Object { $_.TypeErreur -and $_.TypeErreur -ne 'AccessDenied' }).Count
 
     $controlStatuses = [ordered]@{
         Inventaire       = if (Test-Path $fileMap.Inventaire) { 'Success' } else { 'Failed' }
         Permissions      = if (Test-Path $fileMap.Permissions) { 'Success' } else { 'Failed' }
         Extensions       = if (Test-Path $fileMap.Extensions) { if ((Get-CsvRowCount $fileMap.Extensions) -gt 0) { 'Warning' } else { 'Success' } } else { 'Failed' }
         Doublons         = if (Test-Path $fileMap.Doublons) { if ((Get-CsvRowCount $fileMap.Doublons) -gt 0) { 'Warning' } else { 'Success' } } else { 'Failed' }
-        CheminsLongs     = if (Test-Path $fileMap.CheminsLongs) { if ((Get-CsvRowCount $fileMap.CheminsLongs) -gt 0) { 'Partial' } else { 'Success' } } else { 'Failed' }
+        CheminsLongs     = Get-PathTooLongStatus -Path $fileMap.CheminsLongs -Rows $cheminsRows
         AccesRefuses     = if (Test-Path $fileMap.AccesRefuses) { if ((Get-CsvRowCount $fileMap.AccesRefuses) -gt 0) { 'Warning' } else { 'Success' } } else { 'Failed' }
     }
 

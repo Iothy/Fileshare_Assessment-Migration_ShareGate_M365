@@ -21,11 +21,11 @@ SourcePath;TargetType;TargetSPOURL;TargetFolder;DateFilter (YYYY-DD-MM);Permissi
 
 3. Signification des colonnes :
    - `SourcePath` : chemin UNC source obligatoire ;
-   - `TargetType` : `SharePoint` ou `OneDrive` (casse libre en entrée) ;
-   - `TargetSPOURL` : URL HTTPS cible, slash final supprimé ;
+   - `TargetType` : optionnel tant que la cible n'est pas décidée ; accepte `SharePoint`, `OneDrive`, `Teams-Channel General` ou `Teams-Private-Channel` (casse libre en entrée) ;
+   - `TargetSPOURL` : optionnel tant que la cible n'est pas décidée ; URL HTTPS cible, slash final supprimé ;
    - `TargetFolder` : dossier cible, vide autorisé, normalisé en `/` ;
    - `DateFilter (YYYY-DD-MM)` : optionnel, format strict `YYYY-DD-MM` (`2020-31-12` = 31 décembre 2020) ;
-   - `Permissions` : `YES`/`NO` avec alias `Oui`/`Non`/`True`/`False`.
+   - `Permissions` : optionnel ; `YES`/`NO` avec alias `Oui`/`Non`/`True`/`False`.
 4. Lancer le préflight sur la machine qui exécutera le scan. Il contrôle Windows/PowerShell, les UNC du mapping, l'espace disque et l'écriture dans la sortie ; un avertissement demande de vérifier les ACL de sortie :
 
 ```powershell
@@ -45,6 +45,7 @@ SourcePath;TargetType;TargetSPOURL;TargetFolder;DateFilter (YYYY-DD-MM);Permissi
 \\fs01.contoso.local\RH;SharePoint;https://contoso.sharepoint.com/sites/RH;Documents;2020-31-12;YES
 \\fs01.contoso.local\RH\Paie;SharePoint;https://contoso.sharepoint.com/sites/RH;Documents/Paie;;Oui
 \\fs01.contoso.local\Compta\Paie;SharePoint;https://contoso.sharepoint.com/sites/Finance;Archives/Paie;;NO
+\\fs01.contoso.local\Juridique;;;;;
 ```
 
 Cet exemple montre un chevauchement volontaire (`\\fs01.contoso.local\RH` et `\\fs01.contoso.local\RH\Paie`) et deux feuilles `Paie` sous des branches différentes : les identifiants restent distincts car ils sont dérivés du chemin complet.
@@ -77,8 +78,18 @@ Output/<scope>/<yyyyMMdd_HHmmss>/
 ## Validation
 
 `Test-FileShareMapping` signale notamment :
-- erreurs bloquantes d'en-têtes, doublons, chemins UNC invalides, URL non HTTPS, date invalide ou permissions invalides ;
+- erreurs bloquantes d'en-têtes, doublons, chemins UNC invalides, URL non HTTPS lorsqu'elle est renseignée, date invalide ou permissions invalides ;
 - warnings de recouvrement de périmètre, destinations identiques, longueurs cible élevées et préflight UNC inaccessible.
+
+## Contrôle CheminsLongs
+
+Si `TargetSPOURL` est vide, `Get-PathTooLong.ps1` écrit une ligne `Skipped` pour la source et ne calcule aucun verdict migrable/non migrable. Les autres contrôles d'assessment continuent.
+
+Si `TargetSPOURL` est renseignée, le contrôle vérifie uniquement :
+- SharePoint Online : 400 caractères maximum pour le chemin cible décodé complet, nom du fichier inclus ;
+- compatibilité Windows/Office locale : budget relatif par défaut `256 - 96 = 160` caractères, où `96` est une hypothèse projet configurable de préfixe OneDrive local.
+
+Références Microsoft : limites OneDrive/SharePoint, dont la limite de 400 caractères du chemin décodé complet (`support.microsoft.com/office/invalid-file-names-and-file-types-in-onedrive-and-sharepoint-64883a5d-228e-48f5-b3d2-eb39e07630fa`) ; limitation classique Windows MAX_PATH (`learn.microsoft.com/windows/win32/fileio/maximum-file-path-limitation`). L'estimation de 96 caractères n'est pas une limite Microsoft.
 
 ## Documentation
 
