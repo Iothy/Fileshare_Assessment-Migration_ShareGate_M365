@@ -37,7 +37,13 @@ Import-Module .\Scripts Assessments\FileShareAssessment\FileShareAssessment.psd1
 Test-FileShareAssessmentConfiguration -ConfigurationPath '.\Scripts Assessments\Config\FileShareAssessment.json'
 ```
 
-4. Lancer l'assessment :
+4. Lancer le préflight sur la machine qui exécutera le scan. Il contrôle Windows/PowerShell, les UNC du mapping, l'espace disque et l'écriture dans la sortie ; un avertissement demande de vérifier les ACL de sortie :
+
+```powershell
+.\Scripts Assessments\Start-Assessment.ps1 -ConfigurationPath '.\Scripts Assessments\Config\FileShareAssessment.json' -PreflightOnly
+```
+
+5. Lancer l'assessment :
 
 ```powershell
 .\Scripts Assessments\Start-Assessment.ps1 -ConfigurationPath '.\Scripts Assessments\Config\FileShareAssessment.json'
@@ -74,6 +80,8 @@ Les scripts historiques restent présents et peuvent toujours être appelés dir
 - utilisez les fichiers d'exemple fournis pour versionner la structure sans données client ;
 - supprimez ou archivez les résultats de manière contrôlée après le projet ;
 - limitez l'accès aux rapports aux personnes autorisées.
+- utilisez un répertoire de sortie local ou partagé dont l'écriture est réservée à l'équipe projet ;
+- les liens symboliques, jonctions et autres reparse points sont exclus du scan et consignés dans les exports d'erreurs.
 
 ## Contribution
 

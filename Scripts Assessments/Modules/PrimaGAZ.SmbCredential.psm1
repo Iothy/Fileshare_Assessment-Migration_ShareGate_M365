@@ -8,14 +8,14 @@
     un compte différent (ex: SHVE\SVC_ShareGate_RDP) qui n'a pas les droits de lecture.
 
     Windows n'autorise qu'une seule identité SMB par serveur cible. Ce module :
-    - Détecte et ferme toute session préexistante vers le serveur avec un autre compte
+    - Détecte les sessions préexistantes vers le serveur avec un autre compte
     - Établit une session "épinglée" via IPC$ (sans lettre de lecteur)
     - Vérifie l'identité de la session résultante
     - Nettoie proprement en sortie (nettoyage idempotent)
 
     Fonctions exportées :
     - Connect-PrimaGazFileShare        : Établit la session SMB (idempotente)
-    - Disconnect-PrimaGazFileShare     : Supprime les mappings SMB vers le serveur
+    - Disconnect-PrimaGazFileShare     : Supprime uniquement le mapping IPC$ créé par ce module
     - Invoke-WithFileShareCredential   : Wrapper try/finally garantissant le nettoyage
     - Test-FileShareIdentity           : Garde-fou — vérifie l'identité SMB active
 
@@ -36,7 +36,7 @@ function Connect-PrimaGazFileShare {
     .DESCRIPTION
         Avant tout accès :
         1. Vérifie si une session SMB valide (même compte) existe déjà → retour immédiat (idempotent).
-        2. Si une session avec un AUTRE compte existe → la ferme via Remove-SmbMapping + net use.
+        2. Si une session avec un AUTRE compte existe → échoue sans modifier la session.
         3. Établit une nouvelle session via un mapping IPC$ éphémère (Persistent:$false).
         4. Vérifie l'identité de la session résultante via Get-SmbConnection.
         5. Purge le mot de passe en clair immédiatement après usage.
@@ -101,29 +101,7 @@ function Connect-PrimaGazFileShare {
             }
         }
 
-        # Session existante avec un AUTRE compte → la fermer
-        Write-Warning "[SmbCredential] Session SMB existante vers $Server avec compte '$($existingConnections[0].UserName)' — fermeture avant reconnexion."
-
-        try {
-            Get-SmbMapping -ErrorAction SilentlyContinue |
-                Where-Object { $_.RemotePath -like "$targetUNC\*" -or $_.RemotePath -eq $ipcUNC } |
-                ForEach-Object {
-                    Remove-SmbMapping -RemotePath $_.RemotePath -Force -ErrorAction SilentlyContinue
-                }
-        }
-        catch {
-            Write-Verbose "[SmbCredential] Remove-SmbMapping en erreur (ignoré) : $($_.Exception.Message)"
-        }
-
-        try {
-            & net use "$targetUNC\*" /delete /y 2>&1 | Out-Null
-        }
-        catch {
-            Write-Verbose "[SmbCredential] net use /delete en erreur (ignoré) : $($_.Exception.Message)"
-        }
-
-        # Attendre que la session se libère (100 ms)
-        Start-Sleep -Milliseconds 100
+        throw "[SmbCredential] Une session SMB existe déjà vers '$Server' avec '$($existingConnections[0].UserName)'. Elle n'a pas été modifiée. Fermez-la explicitement ou exécutez l'assessment sous l'identité déjà connectée."
     }
 
     # ──────────────────────────────────────────────────────────────
@@ -230,22 +208,9 @@ function Disconnect-PrimaGazFileShare {
         Write-Verbose "[SmbCredential] Remove-SmbMapping IPC$ : $($_.Exception.Message)"
     }
 
-    # Suppression de tous les autres mappings vers ce serveur
+    # Nettoyage complémentaire du seul IPC$ (pour les connexions non visibles via Get-SmbMapping)
     try {
-        $mappings = @(Get-SmbMapping -ErrorAction SilentlyContinue |
-            Where-Object { $_.RemotePath -like "$targetUNC\*" })
-        foreach ($m in $mappings) {
-            Remove-SmbMapping -RemotePath $m.RemotePath -Force -ErrorAction SilentlyContinue
-            $removed++
-        }
-    }
-    catch {
-        Write-Verbose "[SmbCredential] Erreur lors de la suppression des mappings : $($_.Exception.Message)"
-    }
-
-    # Nettoyage complémentaire via net use (pour les connexions non visibles via Get-SmbMapping)
-    try {
-        & net use "$targetUNC\IPC$" /delete /y 2>&1 | Out-Null
+    & net use "$targetUNC\IPC$" /delete /y 2>&1 | Out-Null
     }
     catch {
         Write-Verbose "[SmbCredential] net use IPC$ /delete : $($_.Exception.Message)"

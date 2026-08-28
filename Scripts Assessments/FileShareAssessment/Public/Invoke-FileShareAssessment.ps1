@@ -55,6 +55,12 @@ function Invoke-FileShareAssessment {
         return $plan
     }
 
+    $prerequisites = Test-FileShareAssessmentPrerequisite -ConfigurationPath $ConfigurationPath
+    if (-not $prerequisites.IsReady) {
+        $failures = @($prerequisites.Checks | Where-Object Status -eq 'Fail' | ForEach-Object { $_.Message }) -join [Environment]::NewLine
+        throw "Le préflight a échoué. Corrigez les éléments suivants avant de lancer l'assessment :$([Environment]::NewLine)$failures"
+    }
+
     $outputModulePath = Join-Path -Path $script:AssessmentRoot -ChildPath 'Modules/PrimaGAZ.Output.psm1'
     Import-Module -Name $outputModulePath -Force -ErrorAction Stop
 

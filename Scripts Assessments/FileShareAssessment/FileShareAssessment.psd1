@@ -11,6 +11,7 @@
     FunctionsToExport = @(
         'Import-FileShareAssessmentConfiguration',
         'Test-FileShareAssessmentConfiguration',
+        'Test-FileShareAssessmentPrerequisite',
         'Invoke-FileShareAssessment'
     )
     CmdletsToExport = @()

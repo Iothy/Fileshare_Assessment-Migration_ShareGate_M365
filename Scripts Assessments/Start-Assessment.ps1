@@ -18,6 +18,9 @@ Nom du serveur SMB à transmettre aux scripts historiques qui l'acceptent.
 .PARAMETER PassThru
 Retourne le détail du run créé.
 
+.PARAMETER PreflightOnly
+Exécute uniquement les contrôles préalables de l'hôte, des sources et de la sortie.
+
 .EXAMPLE
 .\Start-Assessment.ps1 -ConfigurationPath '.\Config\FileShareAssessment.json'
 #>
@@ -36,11 +39,19 @@ param(
     [string]$Server,
 
     [Parameter()]
-    [switch]$PassThru
+    [switch]$PassThru,
+
+    [Parameter()]
+    [switch]$PreflightOnly
 )
 
 $modulePath = Join-Path -Path $PSScriptRoot -ChildPath 'FileShareAssessment/FileShareAssessment.psd1'
 Import-Module -Name $modulePath -Force -ErrorAction Stop
+
+if ($PreflightOnly) {
+    Test-FileShareAssessmentPrerequisite -ConfigurationPath $ConfigurationPath
+    return
+}
 
 $invokeParameters = @{
     ConfigurationPath = $ConfigurationPath
