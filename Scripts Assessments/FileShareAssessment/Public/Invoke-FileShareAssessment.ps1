@@ -58,7 +58,7 @@ function Invoke-FileShareAssessment {
     $prerequisites = Test-FileShareAssessmentPrerequisite -ConfigurationPath $ConfigurationPath
     if (-not $prerequisites.IsReady) {
         $failures = @($prerequisites.Checks | Where-Object Status -eq 'Fail' | ForEach-Object { $_.Message }) -join [Environment]::NewLine
-        throw "Le préflight a échoué. Corrigez les éléments suivants avant de lancer l'assessment :$([Environment]::NewLine)$failures"
+        throw [System.InvalidOperationException]::new("Le préflight a échoué. Corrigez les éléments suivants avant de lancer l'assessment :$([Environment]::NewLine)$failures")
     }
     foreach ($warning in @($prerequisites.Checks | Where-Object Status -eq 'Warn')) {
         Write-Warning $warning.Message

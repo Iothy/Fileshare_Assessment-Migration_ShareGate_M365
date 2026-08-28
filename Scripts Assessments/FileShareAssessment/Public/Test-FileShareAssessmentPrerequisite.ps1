@@ -33,6 +33,13 @@ function Test-FileShareAssessmentPrerequisite {
     while (-not (Test-Path -LiteralPath $outputParent) -and (Split-Path -Path $outputParent -Parent) -ne $outputParent) {
         $outputParent = Split-Path -Path $outputParent -Parent
     }
+    if ([string]::IsNullOrWhiteSpace($outputParent)) {
+        $checks.Add([PSCustomObject]@{ Name = 'OutputPath'; Status = 'Fail'; Message = "Le répertoire de sortie '$outputPath' ne peut pas être résolu." })
+        return [PSCustomObject]@{
+            IsReady = $false
+            Checks = $checks.ToArray()
+        }
+    }
     if ($outputParent -match '^\\\\') {
         $checks.Add([PSCustomObject]@{ Name = 'OutputFreeSpace'; Status = 'Warn'; Message = "L'espace libre du partage UNC '$outputParent' ne peut pas être déterminé de manière fiable ; vérifiez au moins $MinimumFreeSpaceGB GB libres avec son administrateur." })
     }
@@ -91,7 +98,10 @@ function Test-FileShareAssessmentPrerequisite {
                 catch {
                     $identitySid = ''
                 }
-                $hasWriteRights = ([uint32]$_.FileSystemRights -band [uint32][System.Security.AccessControl.FileSystemRights]::Write) -ne 0
+                $rights = [uint32]$_.FileSystemRights
+                $hasWriteRights = (($rights -band [uint32][System.Security.AccessControl.FileSystemRights]::Write) -ne 0) -or
+                    (($rights -band [uint32][System.Security.AccessControl.FileSystemRights]::Modify) -eq [uint32][System.Security.AccessControl.FileSystemRights]::Modify) -or
+                    (($rights -band [uint32][System.Security.AccessControl.FileSystemRights]::FullControl) -eq [uint32][System.Security.AccessControl.FileSystemRights]::FullControl)
                 $_.AccessControlType -eq 'Allow' -and
                 $identitySid -in @('S-1-1-0', 'S-1-5-11', 'S-1-5-32-545') -and
                 $hasWriteRights
