@@ -38,12 +38,19 @@ function Test-FileShareAssessmentPrerequisite {
     }
     else {
         try {
-            $drive = Get-Item -LiteralPath $outputParent -ErrorAction Stop | Select-Object -ExpandProperty PSDrive
-            $freeSpaceGB = [math]::Round($drive.Free / 1GB, 2)
+            if ($windowsHost) {
+                $driveRoot = (Split-Path -Path $outputParent -Qualifier) + '\'
+                $freeSpaceGB = [math]::Round(([System.IO.DriveInfo]::new($driveRoot).AvailableFreeSpace / 1GB), 2)
+            }
+            else {
+                $drive = Get-Item -LiteralPath $outputParent -ErrorAction Stop | Select-Object -ExpandProperty PSDrive
+                $driveRoot = $drive.Root
+                $freeSpaceGB = [math]::Round($drive.Free / 1GB, 2)
+            }
             $checks.Add([PSCustomObject]@{
                     Name = 'OutputFreeSpace'
                     Status = if ($freeSpaceGB -ge $MinimumFreeSpaceGB) { 'Pass' } else { 'Fail' }
-                    Message = "$freeSpaceGB GB libres sur '$($drive.Root)' (minimum : $MinimumFreeSpaceGB GB)."
+                    Message = "$freeSpaceGB GB libres sur '$driveRoot' (minimum : $MinimumFreeSpaceGB GB)."
                 })
         }
         catch {
@@ -51,19 +58,28 @@ function Test-FileShareAssessmentPrerequisite {
         }
     }
 
+    $probeFile = Join-Path -Path $outputParent -ChildPath ('.assessment-write-probe-{0}.tmp' -f [guid]::NewGuid())
     try {
-        $probeFile = Join-Path -Path $outputParent -ChildPath ('.assessment-write-probe-{0}.tmp' -f [guid]::NewGuid())
         [System.IO.File]::WriteAllText($probeFile, '')
-        Remove-Item -LiteralPath $probeFile -Force -ErrorAction Stop
         $checks.Add([PSCustomObject]@{ Name = 'OutputWrite'; Status = 'Pass'; Message = "Le répertoire de sortie '$outputParent' est accessible en écriture." })
     }
     catch {
         $checks.Add([PSCustomObject]@{ Name = 'OutputWrite'; Status = 'Fail'; Message = "Le répertoire de sortie '$outputParent' n'est pas accessible en écriture : $($_.Exception.Message)" })
     }
+    finally {
+        if (Test-Path -LiteralPath $probeFile) {
+            try {
+                Remove-Item -LiteralPath $probeFile -Force -ErrorAction Stop
+            }
+            catch {
+                $checks.Add([PSCustomObject]@{ Name = 'OutputProbeCleanup'; Status = 'Warn'; Message = "Le fichier de test '$probeFile' n'a pas pu être supprimé : $($_.Exception.Message)" })
+            }
+        }
+    }
 
     if ($windowsHost -and (Test-Path -LiteralPath $outputParent)) {
         try {
-            $broadWrite = @(Get-Acl -LiteralPath $outputParent -ErrorAction Stop).Access | Where-Object {
+            $broadWrite = (Get-Acl -LiteralPath $outputParent -ErrorAction Stop).Access | Where-Object {
                 try {
                     $identitySid = $_.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value
                 }
