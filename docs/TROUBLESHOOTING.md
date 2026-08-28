@@ -22,6 +22,17 @@ Puis corriger le chemin du CSV de mapping ou d'un script historique référencé
 
 Les fonctions de credential SMB historiques nécessitent un environnement Windows avec les cmdlets SMB adéquates. Sous PowerShell 7 Linux/macOS, le packaging se teste mais le scan réel doit être exécuté sur Windows.
 
+### Le préflight échoue
+
+- exécuter le scan depuis Windows ;
+- vérifier que chaque UNC du mapping est accessible avec le compte de la session ;
+- choisir une sortie avec au moins 5 GB libres et le droit d'écriture ;
+- traiter l'avertissement d'ACL de sortie en choisissant un emplacement réservé à l'équipe projet.
+
+### Une session SMB existe avec un autre compte
+
+Le script ne ferme plus les connexions SMB préexistantes. Fermer explicitement la session concernée, ou lancer l'assessment sous l'identité déjà connectée, puis recommencer.
+
 ### Les performances sont insuffisantes
 
 - réduire le périmètre du mapping CSV ;

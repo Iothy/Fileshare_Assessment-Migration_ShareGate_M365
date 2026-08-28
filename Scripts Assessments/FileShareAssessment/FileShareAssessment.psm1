@@ -15,5 +15,6 @@ Export-ModuleMember -Function @(
     'Invoke-FileShareAssessment',
     'Import-FileShareMapping',
     'Test-FileShareMapping',
+    'Test-FileShareAssessmentPrerequisite',
     'Resolve-FileShareSourceMetadata'
 )

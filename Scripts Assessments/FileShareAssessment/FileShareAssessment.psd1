@@ -14,6 +14,7 @@
         'Invoke-FileShareAssessment',
         'Import-FileShareMapping',
         'Test-FileShareMapping',
+        'Test-FileShareAssessmentPrerequisite',
         'Resolve-FileShareSourceMetadata'
     )
     CmdletsToExport = @()

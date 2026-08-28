@@ -26,8 +26,19 @@ SourcePath;TargetType;TargetSPOURL;TargetFolder;DateFilter (YYYY-DD-MM);Permissi
    - `TargetFolder` : dossier cible, vide autorisé, normalisé en `/` ;
    - `DateFilter (YYYY-DD-MM)` : optionnel, format strict `YYYY-DD-MM` (`2020-31-12` = 31 décembre 2020) ;
    - `Permissions` : `YES`/`NO` avec alias `Oui`/`Non`/`True`/`False`.
+4. Lancer le préflight sur la machine qui exécutera le scan. Il contrôle Windows/PowerShell, les UNC du mapping, l'espace disque et l'écriture dans la sortie ; un avertissement demande de vérifier les ACL de sortie :
 
-4. Exemple :
+```powershell
+.\Scripts Assessments\Start-Assessment.ps1 -ConfigurationPath '.\Scripts Assessments\Config\FileShareAssessment.json' -PreflightOnly
+```
+
+5. Lancer l'assessment :
+
+```powershell
+.\Scripts Assessments\Start-Assessment.ps1 -ConfigurationPath '.\Scripts Assessments\Config\FileShareAssessment.json'
+```
+
+6. Exemple :
 
 ```text
 SourcePath;TargetType;TargetSPOURL;TargetFolder;DateFilter (YYYY-DD-MM);Permissions
@@ -68,3 +79,25 @@ Output/<scope>/<yyyyMMdd_HHmmss>/
 `Test-FileShareMapping` signale notamment :
 - erreurs bloquantes d'en-têtes, doublons, chemins UNC invalides, URL non HTTPS, date invalide ou permissions invalides ;
 - warnings de recouvrement de périmètre, destinations identiques, longueurs cible élevées et préflight UNC inaccessible.
+
+## Documentation
+
+- `docs/TECHNICAL-AUDIT.md`
+- `docs/ARCHITECTURE.md`
+- `docs/OPERATIONS.md`
+- `docs/TROUBLESHOOTING.md`
+
+## Sécurité et confidentialité
+
+- ne commitez pas les exports de scan ;
+- utilisez les fichiers d'exemple fournis pour versionner la structure sans données client ;
+- supprimez ou archivez les résultats de manière contrôlée après le projet ;
+- limitez l'accès aux rapports aux personnes autorisées.
+- utilisez un répertoire de sortie local ou partagé dont l'écriture est réservée à l'équipe projet ;
+- les liens symboliques, jonctions et autres reparse points sont exclus du scan et consignés dans les exports d'erreurs.
+
+## Contribution
+
+- conservez la compatibilité PowerShell 5.1 lorsque c'est raisonnable ;
+- privilégiez des changements incrémentaux et testables ;
+- documentez toute dette technique identifiée avant une réécriture métier.
