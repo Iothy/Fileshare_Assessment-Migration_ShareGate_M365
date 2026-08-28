@@ -210,7 +210,7 @@ function Disconnect-PrimaGazFileShare {
 
     # Nettoyage complémentaire du seul IPC$ (pour les connexions non visibles via Get-SmbMapping)
     try {
-    & net use "$targetUNC\IPC$" /delete /y 2>&1 | Out-Null
+        & net use "$targetUNC\IPC$" /delete /y 2>&1 | Out-Null
     }
     catch {
         Write-Verbose "[SmbCredential] net use IPC$ /delete : $($_.Exception.Message)"

@@ -33,17 +33,22 @@ function Test-FileShareAssessmentPrerequisite {
     while (-not (Test-Path -LiteralPath $outputParent) -and (Split-Path -Path $outputParent -Parent) -ne $outputParent) {
         $outputParent = Split-Path -Path $outputParent -Parent
     }
-    try {
-        $drive = Get-Item -LiteralPath $outputParent -ErrorAction Stop | Select-Object -ExpandProperty PSDrive
-        $freeSpaceGB = [math]::Round($drive.Free / 1GB, 2)
-        $checks.Add([PSCustomObject]@{
-                Name = 'OutputFreeSpace'
-                Status = if ($freeSpaceGB -ge $MinimumFreeSpaceGB) { 'Pass' } else { 'Fail' }
-                Message = "$freeSpaceGB GB libres sur '$($drive.Root)' (minimum : $MinimumFreeSpaceGB GB)."
-            })
+    if ($outputParent -match '^\\\\') {
+        $checks.Add([PSCustomObject]@{ Name = 'OutputFreeSpace'; Status = 'Warn'; Message = "L'espace libre du partage UNC '$outputParent' ne peut pas être déterminé de manière fiable ; vérifiez au moins $MinimumFreeSpaceGB GB libres avec son administrateur." })
     }
-    catch {
-        $checks.Add([PSCustomObject]@{ Name = 'OutputFreeSpace'; Status = 'Fail'; Message = "Impossible de vérifier l'espace de sortie : $($_.Exception.Message)" })
+    else {
+        try {
+            $drive = Get-Item -LiteralPath $outputParent -ErrorAction Stop | Select-Object -ExpandProperty PSDrive
+            $freeSpaceGB = [math]::Round($drive.Free / 1GB, 2)
+            $checks.Add([PSCustomObject]@{
+                    Name = 'OutputFreeSpace'
+                    Status = if ($freeSpaceGB -ge $MinimumFreeSpaceGB) { 'Pass' } else { 'Fail' }
+                    Message = "$freeSpaceGB GB libres sur '$($drive.Root)' (minimum : $MinimumFreeSpaceGB GB)."
+                })
+        }
+        catch {
+            $checks.Add([PSCustomObject]@{ Name = 'OutputFreeSpace'; Status = 'Fail'; Message = "Impossible de vérifier l'espace de sortie : $($_.Exception.Message)" })
+        }
     }
 
     try {
@@ -59,8 +64,14 @@ function Test-FileShareAssessmentPrerequisite {
     if ($windowsHost -and (Test-Path -LiteralPath $outputParent)) {
         try {
             $broadWrite = @(Get-Acl -LiteralPath $outputParent -ErrorAction Stop).Access | Where-Object {
+                try {
+                    $identitySid = $_.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value
+                }
+                catch {
+                    $identitySid = ''
+                }
                 $_.AccessControlType -eq 'Allow' -and
-                $_.IdentityReference -match 'Everyone|Builtin\\Users|Authenticated Users' -and
+                $identitySid -in @('S-1-1-0', 'S-1-5-11', 'S-1-5-32-545') -and
                 $_.FileSystemRights.ToString() -match 'Write|Modify|FullControl'
             }
             $checks.Add([PSCustomObject]@{
