@@ -1,42 +1,31 @@
 # FileShare Assessment - phase 1
 
-Ce dépôt contient une première phase de standardisation des scripts du dossier `Scripts Assessments` afin de les rendre plus réutilisables pour une squad Modern Workplace.
+Ce dépôt contient une standardisation des scripts du dossier `Scripts Assessments` pour préparer un assessment de file shares avant migration Microsoft 365.
 
 ## Ce qui est prêt
 
-- un module PowerShell `FileShareAssessment` importable sans lancer de scan ;
+- un module PowerShell `FileShareAssessment` avec import/validation du mapping simplifié ;
 - un point d'entrée `Scripts Assessments/Start-Assessment.ps1` basé sur une configuration explicite ;
-- une configuration d'exemple anonymisée ;
-- une base de tests Pester et une configuration PSScriptAnalyzer ;
-- une documentation en français pour l'utilisation, l'exploitation et l'audit technique.
-
-## Prérequis
-
-- Windows PowerShell 5.1 recommandé pour les scans sur serveurs Windows ;
-- PowerShell 7 supporté pour le packaging et certains scripts, avec des différences documentées dans `docs/ARCHITECTURE.md` ;
-- droits de lecture NTFS et partage sur les file shares à analyser ;
-- espace disque local pour les exports (`Output/`) ;
-- accès réseau vers les partages sources ;
-- politique d'exécution permettant l'exécution de scripts signés ou internes selon votre standard d'équipe.
-
-## Installation / récupération
-
-```powershell
-Set-Location 'Scripts Assessments'
-Import-Module .\FileShareAssessment\FileShareAssessment.psd1 -Force
-```
+- des exemples anonymisés ;
+- des tests Pester et une configuration PSScriptAnalyzer ;
+- une documentation opérateur en français.
 
 ## Quick start
 
-1. Copier ou adapter `Scripts Assessments/Config/FileShareAssessment.json`.
-2. Adapter `Scripts Assessments/Config/FileShareMapping.example.csv` avec vos chemins et métadonnées.
-3. Lancer un test de configuration :
+1. Copier `Scripts Assessments/Config/FileShareMapping.example.csv`.
+2. Respecter exactement ce modèle CSV UTF-8 `;` :
 
-```powershell
-Import-Module .\Scripts Assessments\FileShareAssessment\FileShareAssessment.psd1 -Force
-Test-FileShareAssessmentConfiguration -ConfigurationPath '.\Scripts Assessments\Config\FileShareAssessment.json'
+```text
+SourcePath;TargetType;TargetSPOURL;TargetFolder;DateFilter (YYYY-DD-MM);Permissions
 ```
 
+3. Signification des colonnes :
+   - `SourcePath` : chemin UNC source obligatoire ;
+   - `TargetType` : `SharePoint` ou `OneDrive` (casse libre en entrée) ;
+   - `TargetSPOURL` : URL HTTPS cible, slash final supprimé ;
+   - `TargetFolder` : dossier cible, vide autorisé, normalisé en `/` ;
+   - `DateFilter (YYYY-DD-MM)` : optionnel, format strict `YYYY-DD-MM` (`2020-31-12` = 31 décembre 2020) ;
+   - `Permissions` : `YES`/`NO` avec alias `Oui`/`Non`/`True`/`False`.
 4. Lancer le préflight sur la machine qui exécutera le scan. Il contrôle Windows/PowerShell, les UNC du mapping, l'espace disque et l'écriture dans la sortie ; un avertissement demande de vérifier les ACL de sortie :
 
 ```powershell
@@ -49,23 +38,47 @@ Test-FileShareAssessmentConfiguration -ConfigurationPath '.\Scripts Assessments\
 .\Scripts Assessments\Start-Assessment.ps1 -ConfigurationPath '.\Scripts Assessments\Config\FileShareAssessment.json'
 ```
 
-## Workflow d'assessment
+6. Exemple :
 
-Le point d'entrée standardisé exécute, dans l'ordre :
+```text
+SourcePath;TargetType;TargetSPOURL;TargetFolder;DateFilter (YYYY-DD-MM);Permissions
+\\fs01.contoso.local\RH;SharePoint;https://contoso.sharepoint.com/sites/RH;Documents;2020-31-12;YES
+\\fs01.contoso.local\RH\Paie;SharePoint;https://contoso.sharepoint.com/sites/RH;Documents/Paie;;Oui
+\\fs01.contoso.local\Compta\Paie;SharePoint;https://contoso.sharepoint.com/sites/Finance;Archives/Paie;;NO
+```
 
-1. inventaire et dernier accès ;
-2. permissions NTFS ;
-3. extensions à auditer ;
-4. doublons ;
-5. chemins trop longs ;
-6. rapport HTML final.
+Cet exemple montre un chevauchement volontaire (`\\fs01.contoso.local\RH` et `\\fs01.contoso.local\RH\Paie`) et deux feuilles `Paie` sous des branches différentes : les identifiants restent distincts car ils sont dérivés du chemin complet.
 
-Les scripts historiques restent présents et peuvent toujours être appelés directement. La standardisation phase 1 les encapsule sans réécriture lourde.
+## Sorties
 
-## Entrées / sorties
+Un run standard produit désormais :
 
-- Entrées : JSON de configuration, CSV de mapping, credentials SMB optionnels.
-- Sorties : structure `Output/<scope>/<horodatage>/` avec sous-dossiers `csv`, `metadata`, `logs`, `errors` et rapports HTML `_Reports`.
+```text
+Output/<scope>/<yyyyMMdd_HHmmss>/
+  Index_Assessment.html
+  Rapport_Global.html
+  manifest.json
+  execution.log
+  <SourceIdentifier>/
+    Rapport_<SourceIdentifier>.html
+    Synthese_<SourceIdentifier>.csv
+    Inventaire_<SourceIdentifier>.csv
+    InventaireDetail_<SourceIdentifier>.csv
+    Permissions_<SourceIdentifier>.csv
+    CheminsLongs_<SourceIdentifier>.csv
+    Extensions_<SourceIdentifier>.csv
+    Doublons_<SourceIdentifier>.csv
+    AccesRefuses_<SourceIdentifier>.csv
+    Execution_<SourceIdentifier>.log
+```
+
+`SourceIdentifier` est dérivé du chemin source complet (serveur, partage, sous-dossiers), avec caractères non sûrs neutralisés ; un suffixe de hash court n'est ajouté qu'en cas de collision.
+
+## Validation
+
+`Test-FileShareMapping` signale notamment :
+- erreurs bloquantes d'en-têtes, doublons, chemins UNC invalides, URL non HTTPS, date invalide ou permissions invalides ;
+- warnings de recouvrement de périmètre, destinations identiques, longueurs cible élevées et préflight UNC inaccessible.
 
 ## Documentation
 

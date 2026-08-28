@@ -11,8 +11,11 @@
     FunctionsToExport = @(
         'Import-FileShareAssessmentConfiguration',
         'Test-FileShareAssessmentConfiguration',
+        'Invoke-FileShareAssessment',
+        'Import-FileShareMapping',
+        'Test-FileShareMapping',
         'Test-FileShareAssessmentPrerequisite',
-        'Invoke-FileShareAssessment'
+        'Resolve-FileShareSourceMetadata'
     )
     CmdletsToExport = @()
     VariablesToExport = @()
