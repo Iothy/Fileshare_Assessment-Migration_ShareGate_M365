@@ -58,21 +58,26 @@ function Test-FileShareAssessmentPrerequisite {
         }
     }
 
-    $probeFile = Join-Path -Path $outputParent -ChildPath ('.assessment-write-probe-{0}.tmp' -f [guid]::NewGuid())
-    try {
-        [System.IO.File]::WriteAllText($probeFile, '')
-        $checks.Add([PSCustomObject]@{ Name = 'OutputWrite'; Status = 'Pass'; Message = "Le répertoire de sortie '$outputParent' est accessible en écriture." })
+    if (-not (Test-Path -LiteralPath $outputParent)) {
+        $checks.Add([PSCustomObject]@{ Name = 'OutputWrite'; Status = 'Fail'; Message = "Aucun répertoire parent existant n'a été trouvé pour la sortie '$outputPath'." })
     }
-    catch {
-        $checks.Add([PSCustomObject]@{ Name = 'OutputWrite'; Status = 'Fail'; Message = "Le répertoire de sortie '$outputParent' n'est pas accessible en écriture : $($_.Exception.Message)" })
-    }
-    finally {
-        if (Test-Path -LiteralPath $probeFile) {
-            try {
-                Remove-Item -LiteralPath $probeFile -Force -ErrorAction Stop
-            }
-            catch {
-                $checks.Add([PSCustomObject]@{ Name = 'OutputProbeCleanup'; Status = 'Warn'; Message = "Le fichier de test '$probeFile' n'a pas pu être supprimé : $($_.Exception.Message)" })
+    else {
+        $probeFile = Join-Path -Path $outputParent -ChildPath ('.assessment-write-probe-{0}.tmp' -f [guid]::NewGuid())
+        try {
+            [System.IO.File]::WriteAllText($probeFile, '')
+            $checks.Add([PSCustomObject]@{ Name = 'OutputWrite'; Status = 'Pass'; Message = "Le répertoire de sortie '$outputParent' est accessible en écriture." })
+        }
+        catch {
+            $checks.Add([PSCustomObject]@{ Name = 'OutputWrite'; Status = 'Fail'; Message = "Le répertoire de sortie '$outputParent' n'est pas accessible en écriture : $($_.Exception.Message)" })
+        }
+        finally {
+            if (Test-Path -LiteralPath $probeFile) {
+                try {
+                    Remove-Item -LiteralPath $probeFile -Force -ErrorAction Stop
+                }
+                catch {
+                    $checks.Add([PSCustomObject]@{ Name = 'OutputProbeCleanup'; Status = 'Warn'; Message = "Le fichier de test '$probeFile' n'a pas pu être supprimé : $($_.Exception.Message)" })
+                }
             }
         }
     }
@@ -86,9 +91,10 @@ function Test-FileShareAssessmentPrerequisite {
                 catch {
                     $identitySid = ''
                 }
+                $hasWriteRights = ([uint32]$_.FileSystemRights -band [uint32][System.Security.AccessControl.FileSystemRights]::Write) -ne 0
                 $_.AccessControlType -eq 'Allow' -and
                 $identitySid -in @('S-1-1-0', 'S-1-5-11', 'S-1-5-32-545') -and
-                $_.FileSystemRights.ToString() -match 'Write|Modify|FullControl'
+                $hasWriteRights
             }
             $checks.Add([PSCustomObject]@{
                     Name = 'OutputSecurity'
