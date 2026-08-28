@@ -22,7 +22,12 @@ function ConvertTo-FileShareSourceIdentifier {
         if ($char -match '[A-Za-z0-9._-]') {
             [void]$builder.Append($char)
         }
-        elseif ($char -match '[\s&+/\\]') {
+        elseif ($char -match '\s') {
+            # Les espaces sont supprimés (et non remplacés par '_') afin de concaténer les mots
+            # d'un même segment, ex. "Sub Subfolder1" -> "SubSubfolder1".
+            continue
+        }
+        elseif ($char -match '[&+/\\]') {
             [void]$builder.Append('_')
         }
         elseif ([int][char]$char -lt 32) {

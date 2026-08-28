@@ -98,6 +98,17 @@ Describe 'FileShare mapping simplifié' {
         $rows[0].SourceIdentifier | Should -Not -Be $rows[1].SourceIdentifier
     }
 
+    It 'supprime les espaces d''un segment au lieu de les remplacer par un underscore' {
+        $folder = New-TestFolder
+        $path = New-MappingFile -Folder $folder -Rows @(
+            '\\Fileshare\RH\Paie\subfolder1\Sub Subfolder1;SharePoint;https://contoso.sharepoint.com/sites/RH;General;;YES'
+        )
+
+        $rows = Import-FileShareMapping -Path $path
+
+        $rows[0].SourceIdentifier | Should -Be 'Fileshare_RH_Paie_subfolder1_SubSubfolder1'
+    }
+
     It 'normalise TargetFolder avec des slashs forward' {
         $folder = New-TestFolder
         $path = New-MappingFile -Folder $folder -Rows @(
