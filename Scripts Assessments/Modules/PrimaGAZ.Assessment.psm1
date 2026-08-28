@@ -256,6 +256,22 @@ function Invoke-SafeRecursiveScan {
                 continue
             }
 
+            # Ne jamais suivre les jonctions, liens symboliques ou autres reparse points :
+            # ils peuvent sortir du périmètre ou introduire un cycle dans l'arborescence.
+            if (($attrs -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+                $errEntry = [PSCustomObject]@{
+                    NomFileShare  = $NomFileShare
+                    Chemin        = $entry
+                    TypeErreur    = 'ReparsePointExcluded'
+                    ExceptionType = 'ReparsePoint'
+                    MessageErreur = 'Lien, jonction ou reparse point exclu du scan.'
+                    DateDetection = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+                }
+                $ErrorCollection.Add($errEntry)
+                Write-Log "Reparse point exclu du scan : $entry" "WARN"
+                continue
+            }
+
             # Empiler les sous-dossiers pour traversée
             if ($isDirectory) {
                 $stack.Push($entry)
