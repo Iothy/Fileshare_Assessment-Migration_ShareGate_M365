@@ -1,4 +1,4 @@
-function Import-FileShareAssessmentConfiguration {
+﻿function Import-FileShareAssessmentConfiguration {
     <#
     .SYNOPSIS
     Charge et normalise un fichier de configuration d'assessment.
@@ -45,6 +45,11 @@ function Import-FileShareAssessmentConfiguration {
 
     if (-not (Test-Path -Path $mappingCsv -PathType Leaf)) {
         throw "Le fichier de mapping '$mappingCsv' est introuvable."
+    }
+
+    $mappingValidation = Test-FileShareMapping -Path $mappingCsv
+    if (-not $mappingValidation.IsValid) {
+        throw ((@('Le fichier de mapping est invalide :') + ($mappingValidation.Errors | ForEach-Object { 'Ligne {0}: {1}' -f $_.LineNumber, $_.Message })) -join [Environment]::NewLine)
     }
 
     $outputRoot = Resolve-AssessmentPath -BasePath $configurationDirectory -Path $rawConfiguration.assessment.outputRoot

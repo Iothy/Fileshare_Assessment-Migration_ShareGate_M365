@@ -28,7 +28,7 @@
 
 .PARAMETER MappingCsv
     Chemin du fichier mapping CSV (mode Mapping).
-    Le CSV doit contenir au minimum les colonnes : CheminUNC;NomFileShare
+    Le CSV doit contenir exactement : SourcePath;TargetType;TargetSPOURL;TargetFolder;DateFilter (YYYY-DD-MM);Permissions
 
 .PARAMETER OutputPath
     Dossier de sortie des résultats.
@@ -76,7 +76,7 @@ param(
     [ValidateNotNullOrEmpty()]
     [string]$CheminUNC,
 
-    [Parameter(Mandatory, ParameterSetName = 'Mapping', HelpMessage = "Chemin du fichier FileShareMapping.csv (colonnes : CheminUNC;NomFileShare;...)")]
+    [Parameter(Mandatory, ParameterSetName = 'Mapping', HelpMessage = "Chemin du fichier FileShareMapping.csv (colonnes : SourcePath;TargetType;TargetSPOURL;TargetFolder;DateFilter (YYYY-DD-MM);Permissions)")]
     [ValidateNotNullOrEmpty()]
     [string]$MappingCsv,
 
@@ -100,6 +100,8 @@ begin {
     Import-Module (Join-Path -Path $PSScriptRoot -ChildPath "Modules\PrimaGAZ.Assessment.psm1") -Force
     $outputModulePath = Join-Path -Path $PSScriptRoot -ChildPath "Modules\PrimaGAZ.Output.psm1"
     if (Test-Path $outputModulePath) { Import-Module $outputModulePath -Force }
+    $fileShareAssessmentModulePath = Join-Path -Path $PSScriptRoot -ChildPath 'FileShareAssessment/FileShareAssessment.psd1'
+    if (Test-Path $fileShareAssessmentModulePath) { Import-Module $fileShareAssessmentModulePath -Force }
     $smbModulePath = Join-Path -Path $PSScriptRoot -ChildPath "Modules\PrimaGAZ.SmbCredential.psm1"
     if (Test-Path $smbModulePath) {
         Import-Module $smbModulePath -Force -ErrorAction $(if ($Credential) { 'Stop' } else { 'SilentlyContinue' })
@@ -279,7 +281,12 @@ begin {
 
             if ($denied.Count -gt 0) {
                 Write-Log "Sous-dossiers/objets refusés sur $NomFS : $($denied.Count)" "WARN"
-                $deniedCsv = Join-Path $errBase "AccessDenied_${safeNomFS}${errSuffix}.csv"
+                $deniedCsv = if ($Run -and -not [string]::IsNullOrWhiteSpace($sourceIdentifier)) {
+                    Get-AssessmentSourceFilePath -Run $Run -SourceIdentifier $sourceIdentifier -Prefix 'AccesRefuses' -Extension 'csv'
+                }
+                else {
+                    Join-Path $errBase "AccessDenied_${safeNomFS}${errSuffix}.csv"
+                }
                 $denied | Export-Csv -Path $deniedCsv -NoTypeInformation -Delimiter ';' -Encoding UTF8
                 Write-Log "CSV des refus : $deniedCsv" "WARN"
                 $denied | Select-Object -First 5 | ForEach-Object { Write-Log "  → Refusé : $($_.Chemin) [$($_.ExceptionType)]" "WARN" }
@@ -338,34 +345,18 @@ begin {
     $cheminsAScanner = New-Object 'System.Collections.Generic.List[object]'
 
     if ($PSCmdlet.ParameterSetName -eq 'Mapping') {
-        if (-not (Test-Path -Path $MappingCsv)) {
-            throw "Le fichier mapping '$MappingCsv' est introuvable."
+        $mappingValidation = Test-FileShareMapping -Path $MappingCsv
+        if (-not $mappingValidation.IsValid) {
+            throw (($mappingValidation.Errors | ForEach-Object { 'Ligne {0}: {1}' -f $_.LineNumber, $_.Message }) -join [Environment]::NewLine)
         }
 
-        $mappingData = @(Import-Csv -Path $MappingCsv -Delimiter ';' -Encoding UTF8)
-        if ($mappingData.Count -eq 0) {
-            throw "Le fichier mapping '$MappingCsv' est vide."
+        foreach ($warning in $mappingValidation.Warnings) {
+            Write-Log ('Mapping ligne {0}: {1}' -f $warning.LineNumber, $warning.Message) 'WARN'
+            $WarningCount++
         }
 
-        $columns = @($mappingData[0].PSObject.Properties.Name)
-        if (-not ($columns -contains 'CheminUNC')) {
-            throw "La colonne obligatoire 'CheminUNC' est absente du mapping CSV."
-        }
-        if (-not ($columns -contains 'NomFileShare')) {
-            throw "La colonne obligatoire 'NomFileShare' est absente du mapping CSV."
-        }
-
-        foreach ($row in $mappingData) {
-            if ([string]::IsNullOrWhiteSpace($row.CheminUNC) -or [string]::IsNullOrWhiteSpace($row.NomFileShare)) {
-                Write-Log "Ligne mapping ignorée (CheminUNC ou NomFileShare vide)." "WARN"
-                $WarningCount++
-                continue
-            }
-
-            $cheminsAScanner.Add([PSCustomObject]@{
-                    CheminUNC    = $row.CheminUNC.Trim()
-                    NomFileShare = $row.NomFileShare.Trim()
-                })
+        foreach ($row in (Import-FileShareMapping -Path $MappingCsv)) {
+            $cheminsAScanner.Add($row)
         }
 
         if ($cheminsAScanner.Count -eq 0) {
@@ -374,10 +365,21 @@ begin {
     }
     else {
         Test-SourcePath -Path $CheminUNC
+        $sourceContext = $null
+        try {
+            $sourceContext = Resolve-FileShareSourceMetadata -SourcePath $CheminUNC
+        }
+        catch {
+            $sourceContext = [PSCustomObject]@{
+                SourcePath       = $CheminUNC
+                SourceIdentifier = Get-SafeFileName -Value (Get-NomFileShareFromPath -Path $CheminUNC)
+            }
+        }
         $cheminsAScanner.Add([PSCustomObject]@{
-                CheminUNC    = $CheminUNC
-                NomFileShare = Get-NomFileShareFromPath -Path $CheminUNC
-            })
+            SourcePath       = $sourceContext.SourcePath
+            SourceIdentifier = $sourceContext.SourceIdentifier
+            LineNumber       = 0
+        })
     }
 
     $allResults = New-Object 'System.Collections.Generic.List[object]'
@@ -399,9 +401,23 @@ process {
     Write-Log "Mode d'exécution : $($PSCmdlet.ParameterSetName)"
 
     foreach ($entry in $cheminsAScanner) {
-        $cheminN1 = $entry.CheminUNC
-        $nomFS = $entry.NomFileShare
+        $cheminN1 = if ($entry.PSObject.Properties.Name -contains 'SourcePath') { $entry.SourcePath } else { $entry.CheminUNC }
+        if ($entry.PSObject.Properties.Name -contains 'SourceIdentifier' -and -not [string]::IsNullOrWhiteSpace($entry.SourceIdentifier)) {
+            $sourceIdentifier = $entry.SourceIdentifier
+        }
+        elseif ($entry.PSObject.Properties.Name -contains 'NomFileShare' -and -not [string]::IsNullOrWhiteSpace($entry.NomFileShare)) {
+            $sourceIdentifier = Get-SafeFileName -Value $entry.NomFileShare
+        }
+        else {
+            $sourceIdentifier = Get-SafeFileName -Value (Get-NomFileShareFromPath -Path $cheminN1)
+        }
+        $nomFS = $sourceIdentifier
         $safeNomFS = Get-SafeFileName -Value $nomFS
+        if ($Run) {
+            $null = Get-AssessmentSourceFolder -Run $Run -SourceIdentifier $sourceIdentifier
+            $accessDeniedPath = Get-AssessmentSourceFilePath -Run $Run -SourceIdentifier $sourceIdentifier -Prefix 'AccesRefuses' -Extension 'csv'
+            Write-EmptyCsv -Path $accessDeniedPath -Columns @('NomFileShare','Chemin','TypeErreur','ExceptionType','MessageErreur','DateDetection')
+        }
 
         Write-Log "=== Démarrage scan : $nomFS ($cheminN1) ===" "INFO"
 
@@ -426,7 +442,10 @@ process {
             $resultsN1 = $scanN1.Results
             $statsN1 = $scanN1.Stats
 
-            if ($PSCmdlet.ParameterSetName -eq 'Mapping') {
+            if ($Run) {
+                $csvN1Path = Get-AssessmentSourceFilePath -Run $Run -SourceIdentifier $sourceIdentifier -Prefix 'Extensions' -Extension 'csv'
+            }
+            elseif ($PSCmdlet.ParameterSetName -eq 'Mapping') {
                 $csvN1Path = Join-Path -Path $OutputPath -ChildPath "ExtensionsBloquees_${safeNomFS}_${timestamp}.csv"
             }
             else {
@@ -437,7 +456,12 @@ process {
                 $resultsN1 | Sort-Object Extension, CheminComplet | Export-Csv -Path $csvN1Path -NoTypeInformation -Delimiter ";" -Encoding UTF8
             }
             else {
-                @(New-NoResultRow -NomFileShare $nomFS -Message "Aucun fichier avec extension bloquée détecté") | Export-Csv -Path $csvN1Path -NoTypeInformation -Delimiter ";" -Encoding UTF8
+                if ($Run) {
+                    Write-EmptyCsv -Path $csvN1Path -Columns @('CheminComplet','NomFichier','Extension','TailleOctets','TailleMB','Severite','DateAnalyse','ResultatAnalyse','NomFileShare')
+                }
+                else {
+                    @(New-NoResultRow -NomFileShare $nomFS -Message "Aucun fichier avec extension bloquée détecté") | Export-Csv -Path $csvN1Path -NoTypeInformation -Delimiter ";" -Encoding UTF8
+                }
             }
             Write-Log "CSV par N1 généré : $csvN1Path" "SUCCESS"
 

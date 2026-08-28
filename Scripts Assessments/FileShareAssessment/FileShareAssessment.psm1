@@ -12,5 +12,8 @@ foreach ($path in Get-ChildItem -Path (Join-Path $PSScriptRoot 'Public') -Filter
 Export-ModuleMember -Function @(
     'Import-FileShareAssessmentConfiguration',
     'Test-FileShareAssessmentConfiguration',
-    'Invoke-FileShareAssessment'
+    'Invoke-FileShareAssessment',
+    'Import-FileShareMapping',
+    'Test-FileShareMapping',
+    'Resolve-FileShareSourceMetadata'
 )

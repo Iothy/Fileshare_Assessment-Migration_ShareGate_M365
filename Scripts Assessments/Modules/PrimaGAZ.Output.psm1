@@ -2,66 +2,83 @@
 .SYNOPSIS
     Module de gestion centralisée des sorties pour les scripts d'assessment PrimaGAZ.
 .DESCRIPTION
-    Centralise toute la logique de création et de navigation dans la structure de dossiers
-    hiérarchique : Output/<Scope>/<yyyyMMdd_HHmmss>/{csv,metadata,logs,errors}/
-.NOTES
-    Projet  : PrimaGAZ - Migration FileShare vers M365
-    Phase   : 01 - Assessment
-    Version : v1.0
+    Centralise la logique de création et de navigation dans la structure :
+    Output/<Scope>/<yyyyMMdd_HHmmss>/ puis un sous-dossier par source.
 #>
 
+function ConvertTo-PlainHashtable {
+    param($InputObject)
+
+    if ($null -eq $InputObject) { return $null }
+    if ($InputObject -is [hashtable]) { return $InputObject }
+    if ($InputObject -is [System.Collections.IDictionary]) {
+        $table = @{}
+        foreach ($key in $InputObject.Keys) {
+            $table[$key] = ConvertTo-PlainHashtable -InputObject $InputObject[$key]
+        }
+        return $table
+    }
+    if ($InputObject -is [pscustomobject]) {
+        $table = @{}
+        foreach ($property in $InputObject.PSObject.Properties) {
+            $table[$property.Name] = ConvertTo-PlainHashtable -InputObject $property.Value
+        }
+        return $table
+    }
+    if ($InputObject -is [System.Collections.IEnumerable] -and $InputObject -isnot [string]) {
+        return @(
+            foreach ($item in $InputObject) {
+                ConvertTo-PlainHashtable -InputObject $item
+            }
+        )
+    }
+    return $InputObject
+}
+
+function Ensure-Directory {
+    param([Parameter(Mandatory)][string]$Path)
+    if (-not (Test-Path -Path $Path)) {
+        New-Item -ItemType Directory -Path $Path -Force | Out-Null
+    }
+    return $Path
+}
+
 function New-AssessmentRun {
-    <#
-    .SYNOPSIS
-        Crée une nouvelle structure de run et retourne l'objet Run.
-    #>
     param(
         [Parameter(Mandatory)] [string]$Scope,
         [Parameter(Mandatory)] [string]$BaseOutput,
-        [string]$FileSharePath = ""
+        [string]$FileSharePath = ''
     )
 
-    $ts = Get-Date -Format "yyyyMMdd_HHmmss"
-    $runPath = Join-Path $BaseOutput (Join-Path $Scope $ts)
+    $ts = Get-Date -Format 'yyyyMMdd_HHmmss'
+    $scopePath = Ensure-Directory -Path (Join-Path $BaseOutput $Scope)
+    $runPath = Ensure-Directory -Path (Join-Path $scopePath $ts)
 
-    $subFolders = @("csv", "metadata", "logs", "errors")
-    foreach ($sub in $subFolders) {
-        $subPath = Join-Path $runPath $sub
-        if (-not (Test-Path $subPath)) {
-            try { New-Item -ItemType Directory -Path $subPath -Force | Out-Null }
-            catch { Write-Warning "New-AssessmentRun : échec de création du dossier '$subPath' — $_" }
-        }
-    }
-
-    $run = [PSCustomObject]@{
+    return [PSCustomObject]@{
         Id            = "${Scope}_${ts}"
         Path          = $runPath
-        Csv           = Join-Path $runPath "csv"
-        Metadata      = Join-Path $runPath "metadata"
-        Logs          = Join-Path $runPath "logs"
-        Errors        = Join-Path $runPath "errors"
-        Manifest      = Join-Path $runPath "manifest.json"
+        Csv           = $runPath
+        Metadata      = $runPath
+        Logs          = $runPath
+        Errors        = $runPath
+        Manifest      = Join-Path $runPath 'manifest.json'
+        RootLog       = Join-Path $runPath 'execution.log'
         Timestamp     = $ts
         Scope         = $Scope
         FileSharePath = $FileSharePath
-        StartedAt     = (Get-Date)
+        StartedAt     = Get-Date
     }
-
-    return $run
 }
 
 function _Reconstruct-Run {
-    <#
-    .SYNOPSIS
-        Reconstruit un objet Run à partir d'un chemin de dossier existant.
-    #>
     param(
         [string]$RunPath,
         [string]$Scope
     )
+
     $ts = Split-Path $RunPath -Leaf
-    $fileSharePath = ""
-    $manifestPath = Join-Path $RunPath "manifest.json"
+    $fileSharePath = ''
+    $manifestPath = Join-Path $RunPath 'manifest.json'
 
     if (Test-Path $manifestPath) {
         try {
@@ -70,29 +87,29 @@ function _Reconstruct-Run {
             if ($obj.scope -and $obj.scope.fileshare_path) {
                 $fileSharePath = $obj.scope.fileshare_path
             }
-        } catch { Write-Warning "_Reconstruct-Run : échec de lecture du manifest '$manifestPath' — $_" }
+        }
+        catch {
+            Write-Warning "_Reconstruct-Run : échec de lecture du manifest '$manifestPath' — $_"
+        }
     }
 
     return [PSCustomObject]@{
         Id            = "${Scope}_${ts}"
         Path          = $RunPath
-        Csv           = Join-Path $RunPath "csv"
-        Metadata      = Join-Path $RunPath "metadata"
-        Logs          = Join-Path $RunPath "logs"
-        Errors        = Join-Path $RunPath "errors"
+        Csv           = $RunPath
+        Metadata      = $RunPath
+        Logs          = $RunPath
+        Errors        = $RunPath
         Manifest      = $manifestPath
+        RootLog       = Join-Path $RunPath 'execution.log'
         Timestamp     = $ts
         Scope         = $Scope
         FileSharePath = $fileSharePath
-        StartedAt     = (Get-Date)
+        StartedAt     = Get-Date
     }
 }
 
 function Get-LatestRun {
-    <#
-    .SYNOPSIS
-        Retourne le dernier run pour un scope donné, ou $null si aucun.
-    #>
     param(
         [Parameter(Mandatory)] [string]$Scope,
         [Parameter(Mandatory)] [string]$BaseOutput
@@ -107,15 +124,10 @@ function Get-LatestRun {
         Select-Object -First 1
 
     if (-not $latest) { return $null }
-
     return _Reconstruct-Run -RunPath $latest.FullName -Scope $Scope
 }
 
 function Get-AllRuns {
-    <#
-    .SYNOPSIS
-        Retourne tous les runs pour un scope, du plus récent au plus ancien.
-    #>
     param(
         [Parameter(Mandatory)] [string]$Scope,
         [Parameter(Mandatory)] [string]$BaseOutput
@@ -128,46 +140,92 @@ function Get-AllRuns {
         Where-Object { $_.Name -match '^\d{8}_\d{6}$' } |
         Sort-Object Name -Descending
 
-    if (-not $dirs) { return @() }
+    return @(
+        foreach ($dir in $dirs) {
+            _Reconstruct-Run -RunPath $dir.FullName -Scope $Scope
+        }
+    )
+}
 
-    $runs = [System.Collections.Generic.List[object]]::new()
-    foreach ($dir in $dirs) {
-        $runs.Add((_Reconstruct-Run -RunPath $dir.FullName -Scope $Scope))
-    }
-    return $runs.ToArray()
+function Get-AssessmentSourceFolder {
+    param(
+        [Parameter(Mandatory)] $Run,
+        [Parameter(Mandatory)] [string]$SourceIdentifier
+    )
+
+    return Ensure-Directory -Path (Join-Path $Run.Path $SourceIdentifier)
+}
+
+function Get-AssessmentSourceFilePath {
+    param(
+        [Parameter(Mandatory)] $Run,
+        [Parameter(Mandatory)] [string]$SourceIdentifier,
+        [Parameter(Mandatory)] [string]$Prefix,
+        [Parameter(Mandatory)] [string]$Extension
+    )
+
+    $folder = Get-AssessmentSourceFolder -Run $Run -SourceIdentifier $SourceIdentifier
+    return Join-Path $folder ("{0}_{1}.{2}" -f $Prefix, $SourceIdentifier, $Extension.TrimStart('.'))
+}
+
+function Get-AssessmentRootFilePath {
+    param(
+        [Parameter(Mandatory)] $Run,
+        [Parameter(Mandatory)] [string]$FileName
+    )
+
+    return Join-Path $Run.Path $FileName
+}
+
+function Write-EmptyCsv {
+    param(
+        [Parameter(Mandatory)] [string]$Path,
+        [Parameter(Mandatory)] [array]$Columns
+    )
+
+    $header = ($Columns | ForEach-Object { '"{0}"' -f (($_ -as [string]) -replace '"', '""') }) -join ';'
+    [System.IO.File]::WriteAllText($Path, $header + [Environment]::NewLine, [System.Text.UTF8Encoding]::new($true))
 }
 
 function Write-RunManifest {
-    <#
-    .SYNOPSIS
-        Écrit le manifest.json dans le dossier de run.
-    #>
     param(
         [Parameter(Mandatory)] $Run,
-        [string]$Status = "Success",
+        [string]$Status = 'Success',
         [array]$Scripts = @(),
         [hashtable]$Summary = @{}
     )
 
-    $now = (Get-Date)
-    $durationMin = [math]::Round(($now - $Run.StartedAt).TotalMinutes, 1)
+    $existing = @{}
+    if (Test-Path $Run.Manifest) {
+        try {
+            $existing = ConvertTo-PlainHashtable -InputObject ((Get-Content -Path $Run.Manifest -Raw -Encoding UTF8) | ConvertFrom-Json)
+        }
+        catch {
+            $existing = @{}
+        }
+    }
 
+    $now = Get-Date
+    $durationMin = [math]::Round(($now - $Run.StartedAt).TotalMinutes, 1)
     $currentUser = try {
         if ($PSVersionTable.PSEdition -eq 'Desktop') {
             [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
-        } else {
-            (whoami 2>$null)
         }
-    } catch {
-        if ($env:USERNAME) { "$env:USERDOMAIN\$env:USERNAME" } else { "Inconnu" }
+        else {
+            whoami 2>$null
+        }
     }
-    if (-not $currentUser) {
-        $currentUser = if ($env:USERNAME) { $env:USERNAME } else { "Inconnu" }
+    catch {
+        if ($env:USERNAME) { "$env:USERDOMAIN\$env:USERNAME" } else { 'Inconnu' }
     }
+    if (-not $currentUser) { $currentUser = if ($env:USERNAME) { $env:USERNAME } else { 'Inconnu' } }
 
-    $scriptsArr = @()
-    foreach ($s in $Scripts) {
-        if ($null -ne $s) { $scriptsArr += $s }
+    $mergedSummary = @{}
+    if ($existing.ContainsKey('summary') -and $existing.summary) {
+        $mergedSummary = ConvertTo-PlainHashtable -InputObject $existing.summary
+    }
+    foreach ($entry in $Summary.GetEnumerator()) {
+        $mergedSummary[$entry.Key] = $entry.Value
     }
 
     $manifest = [ordered]@{
@@ -177,44 +235,45 @@ function Write-RunManifest {
             fileshare_path = $Run.FileSharePath
         }
         execution = [ordered]@{
-            started_at         = $Run.StartedAt.ToString("o")
-            ended_at           = $now.ToString("o")
+            started_at         = $Run.StartedAt.ToString('o')
+            ended_at           = $now.ToString('o')
             duration_minutes   = $durationMin
             host               = $env:COMPUTERNAME
             user               = $currentUser
             powershell_version = "$($PSVersionTable.PSVersion)"
-            scripts_version    = "v3.0"
+            scripts_version    = 'v4.0'
         }
         status    = [ordered]@{
             global = $Status
         }
-        scripts = $scriptsArr
-        summary = $Summary
+        scripts   = @($Scripts | Where-Object { $null -ne $_ })
+        summary   = $mergedSummary
+    }
+
+    foreach ($property in @('mapping', 'sources', 'reports', 'files', 'warnings', 'errors', 'controls', 'completeness')) {
+        if ($existing.ContainsKey($property) -and -not $manifest.Contains($property)) {
+            $manifest[$property] = $existing[$property]
+        }
     }
 
     try {
-        $json = $manifest | ConvertTo-Json -Depth 5
-        $utf8 = [System.Text.Encoding]::UTF8
-        [System.IO.File]::WriteAllText($Run.Manifest, $json, $utf8)
-    } catch {
+        $json = $manifest | ConvertTo-Json -Depth 8
+        [System.IO.File]::WriteAllText($Run.Manifest, $json, [System.Text.Encoding]::UTF8)
+    }
+    catch {
         Write-Warning "Write-RunManifest : impossible d'écrire $($Run.Manifest) — $_"
     }
 }
 
 function Update-RunsHistory {
-    <#
-    .SYNOPSIS
-        Met à jour le fichier _runs.json du scope avec l'entrée du run courant.
-    #>
     param(
         [Parameter(Mandatory)] $Run,
-        [string]$Status = "Success"
+        [string]$Status = 'Success'
     )
 
-    $scopePath  = Split-Path $Run.Path -Parent
-    $runsFile   = Join-Path $scopePath "_runs.json"
-
-    $now = (Get-Date)
+    $scopePath = Split-Path $Run.Path -Parent
+    $runsFile = Join-Path $scopePath '_runs.json'
+    $now = Get-Date
     $durationMin = [math]::Round(($now - $Run.StartedAt).TotalMinutes, 1)
 
     $entry = [ordered]@{
@@ -225,48 +284,46 @@ function Update-RunsHistory {
         path             = $Run.Path
     }
 
-    $runs = [System.Collections.Generic.List[object]]::new()
-
+    $runs = New-Object 'System.Collections.Generic.List[object]'
     if (Test-Path $runsFile) {
         try {
             $content = [System.IO.File]::ReadAllText($runsFile, [System.Text.Encoding]::UTF8)
             $existing = $content | ConvertFrom-Json
             if ($existing) {
-                foreach ($r in $existing) { $runs.Add($r) }
+                foreach ($r in $existing) { $runs.Add($r) | Out-Null }
             }
-        } catch {
+        }
+        catch {
             Write-Warning "Update-RunsHistory : impossible de lire $runsFile — $_"
         }
     }
 
-    $runs.Add($entry)
+    $runs.Add($entry) | Out-Null
 
     try {
         $json = $runs.ToArray() | ConvertTo-Json -Depth 3
-        $utf8 = [System.Text.Encoding]::UTF8
-        [System.IO.File]::WriteAllText($runsFile, $json, $utf8)
-    } catch {
+        [System.IO.File]::WriteAllText($runsFile, $json, [System.Text.Encoding]::UTF8)
+    }
+    catch {
         Write-Warning "Update-RunsHistory : impossible d'écrire $runsFile — $_"
     }
 }
 
 function Initialize-ScriptOutput {
-    <#
-    .SYNOPSIS
-        Retourne les chemins de sortie pour un script donné dans le contexte d'un Run.
-    #>
     param(
         [Parameter(Mandatory)] $Run,
         [Parameter(Mandatory)] [string]$ScriptName
     )
 
     return [PSCustomObject]@{
-        CsvPath      = Join-Path $Run.Csv "$ScriptName.csv"
-        MetadataPath = Join-Path $Run.Metadata "$ScriptName.json"
-        LogPath      = Join-Path $Run.Logs "$ScriptName.log"
-        ErrorsPath   = $Run.Errors
+        CsvPath      = Join-Path $Run.Path "$ScriptName.csv"
+        MetadataPath = Join-Path $Run.Path "$ScriptName.json"
+        LogPath      = Join-Path $Run.Path "$ScriptName.log"
+        ErrorsPath   = $Run.Path
     }
 }
 
 Export-ModuleMember -Function New-AssessmentRun, Get-LatestRun, Get-AllRuns,
-                                Write-RunManifest, Update-RunsHistory, Initialize-ScriptOutput
+    Write-RunManifest, Update-RunsHistory, Initialize-ScriptOutput,
+    Get-AssessmentSourceFolder, Get-AssessmentSourceFilePath, Get-AssessmentRootFilePath,
+    Write-EmptyCsv
