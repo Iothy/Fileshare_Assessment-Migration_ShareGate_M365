@@ -21,14 +21,17 @@
     Chemin du fichier mapping CSV (mode Mapping).
     Le CSV doit contenir exactement : SourcePath;TargetType;TargetSPOURL;TargetFolder;DateFilter (YYYY-DD-MM);Permissions
 
-.PARAMETER LongueurMax
-    Longueur maximale autorisée du chemin complet.
+.PARAMETER SpoPathLimit
+    Longueur maximale du chemin cible SharePoint Online décodé complet, nom du fichier inclus.
     Valeur par défaut : 400
 
-.PARAMETER UrlPrefixLength
-    Longueur estimée du préfixe URL SharePoint (ex: https://tenant.sharepoint.com/sites/site/lib/ = ~70 car.).
-    Si fourni (> 0), la longueur simulée de l'URL cible est calculée et comparée à LongueurMax.
-    Valeur par défaut : 0 (désactivé)
+.PARAMETER WindowsOfficePathLimit
+    Limite projet pour la compatibilité Windows/Office locale.
+    Valeur par défaut : 256
+
+.PARAMETER EstimatedLocalPrefixLength
+    Longueur estimée du préfixe local OneDrive. Hypothèse projet configurable, pas une limite Microsoft.
+    Valeur par défaut : 96
 
 .PARAMETER OutputPath
     Dossier de sortie des résultats.
@@ -36,15 +39,15 @@
 
 .EXAMPLE
     # Mode mono-chemin (rétrocompatible)
-    .\Get-PathTooLong.ps1 -CheminUNC "\\serveur\partage" -LongueurMax 400
+    .\Get-PathTooLong.ps1 -CheminUNC "\\serveur\partage" -SpoPathLimit 400
 
 .EXAMPLE
     # Mode multi-chemins (production)
-    .\Get-PathTooLong.ps1 -MappingCsv ".\Config\FileShareMapping.PrimaGAZ.csv" -LongueurMax 400
+    .\Get-PathTooLong.ps1 -MappingCsv ".\Config\FileShareMapping.PrimaGAZ.csv" -SpoPathLimit 400
 
 .EXAMPLE
-    # Mode mono-chemin avec simulation URL SharePoint
-    .\Get-PathTooLong.ps1 -CheminUNC "\\serveur\partage" -LongueurMax 400 -UrlPrefixLength 72
+    # Mode mono-chemin avec limites configurables
+    .\Get-PathTooLong.ps1 -CheminUNC "\\serveur\partage" -SpoPathLimit 400 -WindowsOfficePathLimit 256 -EstimatedLocalPrefixLength 96
 
 .NOTES
     Projet  : PrimaGAZ - Migration FileShare vers M365
@@ -61,17 +64,35 @@ param(
     [ValidateNotNullOrEmpty()]
     [string]$CheminUNC,
 
+    [Parameter(Mandatory = $false, ParameterSetName = 'Single', HelpMessage = "URL cible SharePoint Online pour simuler les chemins en mode mono-chemin")]
+    [AllowEmptyString()]
+    [string]$TargetSPOURL = '',
+
+    [Parameter(Mandatory = $false, ParameterSetName = 'Single', HelpMessage = "Type de destination pour simuler les chemins en mode mono-chemin")]
+    [AllowEmptyString()]
+    [string]$TargetType = '',
+
+    [Parameter(Mandatory = $false, ParameterSetName = 'Single', HelpMessage = "Dossier cible pour simuler les chemins en mode mono-chemin")]
+    [AllowEmptyString()]
+    [string]$TargetFolder = '',
+
     [Parameter(Mandatory, ParameterSetName = 'Mapping', HelpMessage = "Chemin du fichier FileShareMapping.csv (colonnes : SourcePath;TargetType;TargetSPOURL;TargetFolder;DateFilter (YYYY-DD-MM);Permissions)")]
     [ValidateNotNullOrEmpty()]
     [string]$MappingCsv,
 
-    [Parameter(Mandatory = $false, HelpMessage = "Longueur maximale du chemin complet")]
+    [Parameter(Mandatory = $false, HelpMessage = "Limite SharePoint Online du chemin cible décodé complet")]
+    [Alias('LongueurMax')]
     [ValidateRange(1, 32767)]
-    [int]$LongueurMax = 400,
+    [int]$SpoPathLimit = 400,
 
-    [Parameter(Mandatory = $false, HelpMessage = "Longueur estimée du préfixe URL SharePoint (ex: https://tenant.sharepoint.com/sites/site/lib/ = ~70 car.)")]
-    [ValidateRange(0, 500)]
-    [int]$UrlPrefixLength = 0,
+    [Parameter(Mandatory = $false, HelpMessage = "Limite projet Windows/Office locale")]
+    [ValidateRange(1, 32767)]
+    [int]$WindowsOfficePathLimit = 256,
+
+    [Parameter(Mandatory = $false, HelpMessage = "Longueur estimée du préfixe local OneDrive")]
+    [Alias('UrlPrefixLength')]
+    [ValidateRange(0, 32767)]
+    [int]$EstimatedLocalPrefixLength = 96,
 
     [Parameter(Mandatory = $false, HelpMessage = "Dossier de sortie")]
     [ValidateNotNullOrEmpty()]
@@ -167,22 +188,88 @@ begin {
     function New-NoResultRow {
         param(
             [string]$NomFileShare,
+            [string]$SourcePath,
+            [string]$TargetSPOURL,
+            [string]$TargetType,
+            [string]$TargetFolder,
+            [string]$Status,
             [string]$Message
         )
 
         return [PSCustomObject]@{
-            CheminComplet      = ""
-            Nom                = ""
-            TypeElement        = ""
-            LongueurChemin     = ""
-            LongueurMax        = $LongueurMax
-            Depassement        = ""
-            LongueurUrlSimulee = ""
-            LongueurNom        = ""
-            Severite           = ""
-            DateAnalyse        = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-            ResultatAnalyse    = $Message
-            NomFileShare       = $NomFileShare
+            SourcePath                    = $SourcePath
+            SourceRelativePath            = ''
+            TargetSPOURL                  = $TargetSPOURL
+            TargetType                    = $TargetType
+            TargetFolder                  = $TargetFolder
+            SimulatedTargetPath           = ''
+            TypeElement                   = ''
+            Nom                           = ''
+            LongueurSource                = ''
+            LongueurCibleSPO              = ''
+            LimiteSPO                     = $SpoPathLimit
+            DepassementSPO                = ''
+            CompatibleSPO                 = ''
+            LongueurRelativeWindowsOffice = ''
+            BudgetWindowsOffice           = [Math]::Max(0, $WindowsOfficePathLimit - $EstimatedLocalPrefixLength)
+            DepassementWindowsOffice      = ''
+            CompatibleWindowsOffice       = ''
+            StatutControle                = $Status
+            ActionRecommandee             = $Message
+            DateAnalyse                   = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+            NomFileShare                  = $NomFileShare
+        }
+    }
+
+    function Get-PathTooLongColumns {
+        return @(
+            'SourcePath',
+            'SourceRelativePath',
+            'TargetSPOURL',
+            'TargetType',
+            'TargetFolder',
+            'SimulatedTargetPath',
+            'TypeElement',
+            'Nom',
+            'LongueurSource',
+            'LongueurCibleSPO',
+            'LimiteSPO',
+            'DepassementSPO',
+            'CompatibleSPO',
+            'LongueurRelativeWindowsOffice',
+            'BudgetWindowsOffice',
+            'DepassementWindowsOffice',
+            'CompatibleWindowsOffice',
+            'StatutControle',
+            'ActionRecommandee',
+            'DateAnalyse',
+            'NomFileShare'
+        )
+    }
+
+    function Join-UrlPath {
+        param([string[]]$Parts)
+
+        $segments = @(
+            foreach ($part in $Parts) {
+                if (-not [string]::IsNullOrWhiteSpace($part)) {
+                    $part.Trim().Replace('\', '/').Trim('/')
+                }
+            }
+        ) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+
+        return ($segments -join '/')
+    }
+
+    function Get-DecodedLength {
+        param([string]$Value)
+
+        if ([string]::IsNullOrEmpty($Value)) { return 0 }
+        try {
+            return ([System.Uri]::UnescapeDataString($Value)).Length
+        }
+        catch {
+            return $Value.Length
         }
     }
 
@@ -190,8 +277,13 @@ begin {
         param(
             [Parameter(Mandatory = $true)][string]$CheminN1,
             [Parameter(Mandatory = $true)][string]$NomFS,
-            [Parameter(Mandatory = $true)][int]$LongueurMax,
-            [Parameter(Mandatory = $true)][int]$UrlPrefixLength
+            [Parameter(Mandatory = $true)][string]$TargetSPOURL,
+            [AllowEmptyString()][string]$TargetType,
+            [AllowEmptyString()][string]$TargetFolder,
+            [AllowEmptyString()][string]$LeafName,
+            [Parameter(Mandatory = $true)][int]$SpoPathLimit,
+            [Parameter(Mandatory = $true)][int]$WindowsOfficePathLimit,
+            [Parameter(Mandatory = $true)][int]$EstimatedLocalPrefixLength
         )
 
         $results = New-Object 'System.Collections.Generic.List[object]'
@@ -200,10 +292,8 @@ begin {
         $safeNomFS = Get-SafeFileName -Value $NomFS
 
         Write-Log "Début de l'analyse du chemin : $CheminN1"
-        Write-Log "Longueur maximale appliquée : $LongueurMax caractères"
-        if ($UrlPrefixLength -gt 0) {
-            Write-Log "Préfixe URL SharePoint simulé : $UrlPrefixLength caractères"
-        }
+        Write-Log "Limite SharePoint Online appliquée : $SpoPathLimit caractères"
+        Write-Log "Limite Windows/Office projet : $WindowsOfficePathLimit caractères ; préfixe local estimé : $EstimatedLocalPrefixLength ; budget relatif : $([Math]::Max(0, $WindowsOfficePathLimit - $EstimatedLocalPrefixLength)) caractères"
 
         # Énumération résiliente — aucun crash possible sur objets inaccessibles
         Invoke-SafeRecursiveScan -RootPath $CheminN1 -ErrorCollection $scanErrorsList `
@@ -218,24 +308,41 @@ begin {
                 $currentLength = $item.FullName.Length
                 $rootLength = $CheminN1.TrimEnd('\').Length
                 $relativePath = if ($currentLength -gt $rootLength) { $item.FullName.Substring($rootLength).TrimStart('\') } else { "" }
-                $simulatedUrlLength = $UrlPrefixLength + $relativePath.Length
-                $effectiveLength = if ($UrlPrefixLength -gt 0) { $simulatedUrlLength } else { $currentLength }
+                $targetRelativePath = Join-UrlPath -Parts @($TargetFolder, $LeafName, $relativePath)
+                $simulatedTargetPath = Join-UrlPath -Parts @($TargetSPOURL, $targetRelativePath)
+                $spoLength = Get-DecodedLength -Value $simulatedTargetPath
+                $windowsOfficeLength = Get-DecodedLength -Value $targetRelativePath
+                $windowsOfficeBudget = [Math]::Max(0, $WindowsOfficePathLimit - $EstimatedLocalPrefixLength)
                 $isDir = ($item -is [System.IO.DirectoryInfo])
+                $compatibleSPO = $spoLength -le $SpoPathLimit
+                $compatibleWindowsOffice = $windowsOfficeLength -le $windowsOfficeBudget
 
-                if ($effectiveLength -gt $LongueurMax) {
+                if (-not $compatibleSPO -or -not $compatibleWindowsOffice) {
+                    $actions = @()
+                    if (-not $compatibleSPO) { $actions += 'Réduire le chemin cible SharePoint Online.' }
+                    if (-not $compatibleWindowsOffice) { $actions += 'Réduire le chemin relatif synchronisé pour la compatibilité Windows/Office.' }
                     $results.Add([PSCustomObject]@{
-                            CheminComplet      = $item.FullName
-                            Nom                = $item.Name
-                            TypeElement        = if ($isDir) { "Dossier" } else { "Fichier" }
-                            LongueurChemin     = $currentLength
-                            LongueurMax        = $LongueurMax
-                            Depassement        = $effectiveLength - $LongueurMax
-                            LongueurUrlSimulee = if ($UrlPrefixLength -gt 0) { $simulatedUrlLength } else { "N/A" }
-                            LongueurNom        = $item.Name.Length
-                            Severite           = "ERROR"
-                            DateAnalyse        = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-                            ResultatAnalyse    = "Chemin trop long détecté"
-                            NomFileShare       = $NomFS
+                            SourcePath                    = $item.FullName
+                            SourceRelativePath            = $relativePath
+                            TargetSPOURL                  = $TargetSPOURL
+                            TargetType                    = $TargetType
+                            TargetFolder                  = $TargetFolder
+                            SimulatedTargetPath           = $simulatedTargetPath
+                            TypeElement                   = if ($isDir) { "Dossier" } else { "Fichier" }
+                            Nom                           = $item.Name
+                            LongueurSource                = $currentLength
+                            LongueurCibleSPO              = $spoLength
+                            LimiteSPO                     = $SpoPathLimit
+                            DepassementSPO                = [Math]::Max(0, $spoLength - $SpoPathLimit)
+                            CompatibleSPO                 = $compatibleSPO
+                            LongueurRelativeWindowsOffice = $windowsOfficeLength
+                            BudgetWindowsOffice           = $windowsOfficeBudget
+                            DepassementWindowsOffice      = [Math]::Max(0, $windowsOfficeLength - $windowsOfficeBudget)
+                            CompatibleWindowsOffice       = $compatibleWindowsOffice
+                            StatutControle                = 'Completed'
+                            ActionRecommandee             = ($actions -join ' ')
+                            DateAnalyse                   = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+                            NomFileShare                  = $NomFS
                         })
                 }
             }
@@ -358,6 +465,10 @@ begin {
         $cheminsAScanner.Add([PSCustomObject]@{
             SourcePath       = $sourceContext.SourcePath
             SourceIdentifier = $sourceContext.SourceIdentifier
+            TargetSPOURL     = $TargetSPOURL.TrimEnd('/')
+            TargetType       = $TargetType
+            TargetFolder     = $TargetFolder.Trim().Replace('\', '/').Trim('/')
+            LeafName         = if ($sourceContext.PSObject.Properties.Name -contains 'LeafName') { $sourceContext.LeafName } else { Get-NomFileShareFromPath -Path $CheminUNC }
             LineNumber       = 0
         })
     }
@@ -368,6 +479,7 @@ begin {
         N1Reussis = 0
         N1Refuses = 0
         N1Erreurs = 0
+        N1Skipped = 0
     }
 }
 
@@ -393,6 +505,24 @@ process {
         }
         $nomFS = $sourceIdentifier
         $safeNomFS = Get-SafeFileName -Value $nomFS
+        $targetSpoUrl = if ($entry.PSObject.Properties.Name -contains 'TargetSPOURL') { [string]$entry.TargetSPOURL } else { '' }
+        $targetType = if ($entry.PSObject.Properties.Name -contains 'TargetType') { [string]$entry.TargetType } else { '' }
+        $targetFolder = if ($entry.PSObject.Properties.Name -contains 'TargetFolder') { [string]$entry.TargetFolder } else { '' }
+        $leafName = if ($entry.PSObject.Properties.Name -contains 'LeafName' -and -not [string]::IsNullOrWhiteSpace($entry.LeafName)) {
+            [string]$entry.LeafName
+        }
+        else {
+            Get-NomFileShareFromPath -Path $cheminN1
+        }
+        if ($Run) {
+            $csvN1Path = Get-AssessmentSourceFilePath -Run $Run -SourceIdentifier $sourceIdentifier -Prefix 'CheminsLongs' -Extension 'csv'
+        }
+        elseif ($PSCmdlet.ParameterSetName -eq 'Mapping') {
+            $csvN1Path = Join-Path -Path $OutputPath -ChildPath "CheminsTropLongs_${safeNomFS}_${timestamp}.csv"
+        }
+        else {
+            $csvN1Path = $CsvPathConsolide
+        }
         if ($Run) {
             $null = Get-AssessmentSourceFolder -Run $Run -SourceIdentifier $sourceIdentifier
             $accessDeniedPath = Get-AssessmentSourceFilePath -Run $Run -SourceIdentifier $sourceIdentifier -Prefix 'AccesRefuses' -Extension 'csv'
@@ -400,6 +530,16 @@ process {
         }
 
         Write-Log "=== Démarrage scan : $nomFS ($cheminN1) ===" "INFO"
+
+        if ([string]::IsNullOrWhiteSpace($targetSpoUrl)) {
+            $message = "Contrôle chemins longs ignoré : TargetSPOURL absent pour cette source."
+            Write-Log "$message Source : $cheminN1" "WARN"
+            @(New-NoResultRow -NomFileShare $nomFS -SourcePath $cheminN1 -TargetSPOURL $targetSpoUrl -TargetType $targetType -TargetFolder $targetFolder -Status 'Skipped' -Message $message) |
+                Export-Csv -Path $csvN1Path -NoTypeInformation -Delimiter ";" -Encoding UTF8
+            $WarningCount++
+            $globalStats.N1Skipped++
+            continue
+        }
 
         try {
             $null = Get-Item -Path $cheminN1 -ErrorAction Stop
@@ -418,29 +558,20 @@ process {
         }
 
         try {
-            $scanN1 = Invoke-N1PathTooLongScan -CheminN1 $cheminN1 -NomFS $nomFS -LongueurMax $LongueurMax -UrlPrefixLength $UrlPrefixLength
+            $scanN1 = Invoke-N1PathTooLongScan -CheminN1 $cheminN1 -NomFS $nomFS -TargetSPOURL $targetSpoUrl -TargetType $targetType -TargetFolder $targetFolder -LeafName $leafName -SpoPathLimit $SpoPathLimit -WindowsOfficePathLimit $WindowsOfficePathLimit -EstimatedLocalPrefixLength $EstimatedLocalPrefixLength
             $resultsN1 = $scanN1.Results
             $statsN1 = $scanN1.Stats
 
-            if ($Run) {
-                $csvN1Path = Get-AssessmentSourceFilePath -Run $Run -SourceIdentifier $sourceIdentifier -Prefix 'CheminsLongs' -Extension 'csv'
-            }
-            elseif ($PSCmdlet.ParameterSetName -eq 'Mapping') {
-                $csvN1Path = Join-Path -Path $OutputPath -ChildPath "CheminsTropLongs_${safeNomFS}_${timestamp}.csv"
-            }
-            else {
-                $csvN1Path = $CsvPathConsolide
-            }
-
             if ($resultsN1.Count -gt 0) {
-                $resultsN1 | Sort-Object LongueurChemin -Descending | Export-Csv -Path $csvN1Path -NoTypeInformation -Delimiter ";" -Encoding UTF8
+                $resultsN1 | Sort-Object LongueurCibleSPO -Descending | Export-Csv -Path $csvN1Path -NoTypeInformation -Delimiter ";" -Encoding UTF8
             }
             else {
                 if ($Run) {
-                    Write-EmptyCsv -Path $csvN1Path -Columns @('CheminComplet','Nom','TypeElement','LongueurChemin','LongueurMax','Depassement','LongueurUrlSimulee','LongueurNom','Severite','DateAnalyse','ResultatAnalyse','NomFileShare')
+                    Write-EmptyCsv -Path $csvN1Path -Columns (Get-PathTooLongColumns)
                 }
                 else {
-                    @(New-NoResultRow -NomFileShare $nomFS -Message "Aucun chemin trop long détecté") | Export-Csv -Path $csvN1Path -NoTypeInformation -Delimiter ";" -Encoding UTF8
+                    @(New-NoResultRow -NomFileShare $nomFS -SourcePath $cheminN1 -TargetSPOURL $targetSpoUrl -TargetType $targetType -TargetFolder $targetFolder -Status 'Completed' -Message "Aucun dépassement SPO ou Windows/Office détecté") |
+                        Export-Csv -Path $csvN1Path -NoTypeInformation -Delimiter ";" -Encoding UTF8
                 }
             }
             Write-Log "CSV par N1 généré : $csvN1Path" "SUCCESS"
@@ -466,10 +597,10 @@ end {
     $ResultsCount = $allResults.Count
 
     if ($ResultsCount -gt 0) {
-        $allResults | Sort-Object LongueurChemin -Descending | Export-Csv -Path $CsvPathConsolide -NoTypeInformation -Delimiter ";" -Encoding UTF8
+        $allResults | Sort-Object LongueurCibleSPO -Descending | Export-Csv -Path $CsvPathConsolide -NoTypeInformation -Delimiter ";" -Encoding UTF8
 
-        $maxDetected = ($allResults | Measure-Object -Property LongueurChemin -Maximum).Maximum
-        $avgDetected = [math]::Round((($allResults | Measure-Object -Property LongueurChemin -Average).Average), 2)
+        $maxDetected = ($allResults | Measure-Object -Property LongueurCibleSPO -Maximum).Maximum
+        $avgDetected = [math]::Round((($allResults | Measure-Object -Property LongueurCibleSPO -Average).Average), 2)
 
         Write-Log "Analyse terminée avec $ResultsCount chemin(s) trop long(s)." "ERROR"
         Write-Log "Longueur maximale détectée : $maxDetected caractères" "ERROR"
@@ -477,8 +608,9 @@ end {
         $ErrorCount += 3
     }
     else {
-        @(New-NoResultRow -NomFileShare "[CONSOLIDE]" -Message "Aucun chemin trop long détecté") | Export-Csv -Path $CsvPathConsolide -NoTypeInformation -Delimiter ";" -Encoding UTF8
-        Write-Log "Aucun chemin ne dépasse la longueur maximale de $LongueurMax caractères." "SUCCESS"
+        @(New-NoResultRow -NomFileShare "[CONSOLIDE]" -SourcePath '' -TargetSPOURL '' -TargetType '' -TargetFolder '' -Status 'Completed' -Message "Aucun dépassement SPO ou Windows/Office détecté") |
+            Export-Csv -Path $CsvPathConsolide -NoTypeInformation -Delimiter ";" -Encoding UTF8
+        Write-Log "Aucun chemin ne dépasse les limites SPO ($SpoPathLimit) et Windows/Office (budget relatif $([Math]::Max(0, $WindowsOfficePathLimit - $EstimatedLocalPrefixLength)))." "SUCCESS"
     }
 
     $mode = if ($PSCmdlet.ParameterSetName -eq 'Mapping') { 'Mapping' } else { 'Single' }
@@ -493,6 +625,11 @@ end {
         n1_reussis       = $globalStats.N1Reussis
         n1_refuses       = $globalStats.N1Refuses
         n1_erreurs       = $globalStats.N1Erreurs
+        n1_skipped       = $globalStats.N1Skipped
+        spo_path_limit   = $SpoPathLimit
+        windows_office_path_limit = $WindowsOfficePathLimit
+        estimated_local_prefix_length = $EstimatedLocalPrefixLength
+        windows_office_relative_budget = [Math]::Max(0, $WindowsOfficePathLimit - $EstimatedLocalPrefixLength)
         duration_seconds = $durationSeconds
         csv_consolide    = $CsvPathConsolide
     }

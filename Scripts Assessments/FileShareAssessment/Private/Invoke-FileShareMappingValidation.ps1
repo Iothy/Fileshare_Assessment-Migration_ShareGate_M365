@@ -141,7 +141,9 @@ function Invoke-FileShareMappingValidation {
             }
         }
 
-        $destinationGroups = $sortedRows | Group-Object { '{0}|{1}' -f $_.TargetSPOURL, $_.TargetFolder }
+        $destinationGroups = $sortedRows |
+            Where-Object { -not [string]::IsNullOrWhiteSpace($_.TargetSPOURL) } |
+            Group-Object { '{0}|{1}' -f $_.TargetSPOURL, $_.TargetFolder }
         foreach ($group in $destinationGroups | Where-Object { $_.Count -gt 1 }) {
             foreach ($destinationRow in $group.Group) {
                 $warnings.Add([PSCustomObject]@{
@@ -153,7 +155,7 @@ function Invoke-FileShareMappingValidation {
 
         foreach ($currentRow in $sortedRows) {
             $destinationPath = if ([string]::IsNullOrWhiteSpace($currentRow.TargetFolder)) { $currentRow.TargetSPOURL } else { '{0}/{1}' -f $currentRow.TargetSPOURL, $currentRow.TargetFolder }
-            if ($destinationPath.Length -gt 218) {
+            if (-not [string]::IsNullOrWhiteSpace($currentRow.TargetSPOURL) -and $destinationPath.Length -gt 218) {
                 $warnings.Add([PSCustomObject]@{
                     LineNumber = $currentRow.LineNumber
                     Message    = "La destination normalisée '$destinationPath' dépasse 218 caractères et peut poser problème côté SharePoint."

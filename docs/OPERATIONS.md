@@ -19,7 +19,9 @@ SourcePath;TargetType;TargetSPOURL;TargetFolder;DateFilter (YYYY-DD-MM);Permissi
 ```
 
 Rappels :
-- `TargetType` accepte `SharePoint` / `OneDrive` ;
+- seul `SourcePath` est obligatoire pour lancer l'assessment général ;
+- `TargetType` accepte `SharePoint`, `OneDrive`, `Teams-Channel General` ou `Teams-Private-Channel` lorsqu'il est renseigné ;
+- si `TargetSPOURL` est vide, le contrôle chemins longs est marqué `Skipped` pour cette source, sans bloquer les autres contrôles ;
 - `Permissions` accepte `YES` / `NO` et alias `Oui` / `Non` / `True` / `False` ;
 - `DateFilter (YYYY-DD-MM)` utilise volontairement `YYYY-DD-MM` (`2020-31-12` = 31 décembre 2020).
 
@@ -62,10 +64,22 @@ Chaque sous-dossier source contient les CSV, le rapport HTML et `Execution_<Sour
 
 - erreur : en-têtes manquants, renommés, supplémentaires ou réordonnés ;
 - erreur : `SourcePath` vide, non UNC, sans serveur ou sans partage ;
-- erreur : `TargetSPOURL` non HTTPS ;
+- erreur : `TargetSPOURL` non HTTPS lorsqu'il est renseigné ;
 - erreur : `2020-12-31` rejeté car le format attendu est `YYYY-DD-MM` ;
 - warning : recouvrement entre `\\fs01.contoso.local\RH` et `\\fs01.contoso.local\RH\Paie` ;
 - warning : plusieurs sources vers la même destination normalisée.
+
+## Chemins longs
+
+Le contrôle `CheminsLongs` est dépendant d'une cible M365. Si le client fournit seulement des chemins UNC dans le mapping, le contrôle est ignoré proprement (`Skipped`) pour ces lignes.
+
+Avec une cible renseignée, les paramètres par défaut sont :
+- `SpoPathLimit = 400` : limite SharePoint Online sur le chemin cible décodé complet, nom du fichier inclus ;
+- `WindowsOfficePathLimit = 256` ;
+- `EstimatedLocalPrefixLength = 96`, hypothèse projet configurable pour le préfixe local OneDrive ;
+- budget relatif Windows/Office par défaut : `256 - 96 = 160`.
+
+Références Microsoft utilisées : limites OneDrive/SharePoint (`support.microsoft.com/office/invalid-file-names-and-file-types-in-onedrive-and-sharepoint-64883a5d-228e-48f5-b3d2-eb39e07630fa`) et limitation Windows MAX_PATH (`learn.microsoft.com/windows/win32/fileio/maximum-file-path-limitation`). Le préfixe 96 caractères est une hypothèse projet, pas une limite Microsoft.
 
 ## Bonnes pratiques sécurité / RGPD
 

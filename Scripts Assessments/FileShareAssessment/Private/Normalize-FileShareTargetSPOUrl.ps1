@@ -6,7 +6,7 @@ function Normalize-FileShareTargetSPOUrl {
     )
 
     if ([string]::IsNullOrWhiteSpace($Value)) {
-        throw 'La colonne TargetSPOURL est obligatoire.'
+        return ''
     }
 
     $uri = $null

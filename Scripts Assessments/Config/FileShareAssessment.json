@@ -52,8 +52,9 @@
       "description": "Détection des chemins trop longs pour la cible M365.",
       "script": "../Get-PathTooLong.ps1",
       "parameters": {
-        "LongueurMax": 400,
-        "UrlPrefixLength": 72
+        "SpoPathLimit": 400,
+        "WindowsOfficePathLimit": 256,
+        "EstimatedLocalPrefixLength": 96
       }
     },
     "report": {
