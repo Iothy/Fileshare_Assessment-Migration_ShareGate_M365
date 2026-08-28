@@ -6,11 +6,22 @@
 Import-Module .\Scripts Assessments\FileShareAssessment\FileShareAssessment.psd1 -Force
 ```
 
-## Validation de configuration
+## Validation du mapping
 
 ```powershell
-Test-FileShareAssessmentConfiguration -ConfigurationPath '.\Scripts Assessments\Config\FileShareAssessment.json'
+Test-FileShareMapping -Path '.\Scripts Assessments\Config\FileShareMapping.example.csv'
 ```
+
+Le CSV doit être en UTF-8, séparé par `;`, et contenir exactement :
+
+```text
+SourcePath;TargetType;TargetSPOURL;TargetFolder;DateFilter (YYYY-DD-MM);Permissions
+```
+
+Rappels :
+- `TargetType` accepte `SharePoint` / `OneDrive` ;
+- `Permissions` accepte `YES` / `NO` et alias `Oui` / `Non` / `True` / `False` ;
+- `DateFilter (YYYY-DD-MM)` utilise volontairement `YYYY-DD-MM` (`2020-31-12` = 31 décembre 2020).
 
 ## Lancement d'un assessment complet
 
@@ -18,22 +29,27 @@ Test-FileShareAssessmentConfiguration -ConfigurationPath '.\Scripts Assessments\
 .\Scripts Assessments\Start-Assessment.ps1 -ConfigurationPath '.\Scripts Assessments\Config\FileShareAssessment.json'
 ```
 
-## Contrôles couverts
+## Sorties attendues
 
-- inventaire global et dernier accès ;
-- permissions NTFS ;
-- extensions à auditer ;
-- doublons ;
-- chemins trop longs ;
-- rapport HTML final.
+```text
+Output/<scope>/<yyyyMMdd_HHmmss>/
+  Index_Assessment.html
+  Rapport_Global.html
+  manifest.json
+  execution.log
+  <SourceIdentifier>/...
+```
 
-## Fichiers produits
+Chaque sous-dossier source contient les CSV, le rapport HTML et `Execution_<SourceIdentifier>.log`.
 
-- `csv/` : exports consolidés ;
-- `metadata/` : résumés JSON ;
-- `logs/` : journaux d'exécution ;
-- `errors/` : exports d'erreurs d'accès ;
-- `_Reports/` : rapports HTML et annexes.
+## Erreurs et warnings fréquents
+
+- erreur : en-têtes manquants, renommés, supplémentaires ou réordonnés ;
+- erreur : `SourcePath` vide, non UNC, sans serveur ou sans partage ;
+- erreur : `TargetSPOURL` non HTTPS ;
+- erreur : `2020-12-31` rejeté car le format attendu est `YYYY-DD-MM` ;
+- warning : recouvrement entre `\\fs01.contoso.local\RH` et `\\fs01.contoso.local\RH\Paie` ;
+- warning : plusieurs sources vers la même destination normalisée.
 
 ## Bonnes pratiques sécurité / RGPD
 

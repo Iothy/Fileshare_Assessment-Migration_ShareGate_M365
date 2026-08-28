@@ -1,4 +1,5 @@
-CheminUNC;NomFileShare;TypeUsage;CibleM365;Owner;EmailOwner;Description
-\\fileserver.contoso.local\Finance;Finance;Collaboratif;SharePoint;Equipe Finance;finance.owner@example.invalid;Bibliothèque de documents Finance
-\\fileserver.contoso.local\RessourcesHumaines;RessourcesHumaines;Collaboratif;SharePoint;Equipe RH;rh.owner@example.invalid;Documents RH à analyser
-\\fileserver.contoso.local\Users$;HomeDirectories;Personnel;OneDrive;Equipe Workplace;workplace@example.invalid;Répertoires personnels utilisateurs
+SourcePath;TargetType;TargetSPOURL;TargetFolder;DateFilter (YYYY-DD-MM);Permissions
+\\fs01.contoso.local\RH;SharePoint;https://contoso.sharepoint.com/sites/RH;Documents;2020-31-12;YES
+\\fs01.contoso.local\RH\Paie;SharePoint;https://contoso.sharepoint.com/sites/RH;Documents/Paie;;Oui
+\\fs01.contoso.local\Compta\Paie;SharePoint;https://contoso.sharepoint.com/sites/Finance;Archives/Paie;;NO
+\\fs02.contoso.local\Support & Assistance\Dossiers Actifs;OneDrive;https://contoso-my.sharepoint.com/personal/support_assistance_contoso_onmicrosoft_com;General\Archive\Migration;;True

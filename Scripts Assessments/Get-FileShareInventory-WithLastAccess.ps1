@@ -19,7 +19,7 @@
 
 .PARAMETER MappingCsv
     Chemin vers le fichier FileShareMapping.csv listant les N1 à scanner (mode Mapping).
-    Le CSV doit contenir au minimum les colonnes : CheminUNC;NomFileShare
+    Le CSV doit contenir exactement : SourcePath;TargetType;TargetSPOURL;TargetFolder;DateFilter (YYYY-DD-MM);Permissions
 
 .PARAMETER OutputPath
     Dossier de sortie (par défaut : .\Output).
@@ -65,7 +65,7 @@ param(
     [ValidateNotNullOrEmpty()]
     [string]$CheminUNC,
 
-    [Parameter(Mandatory, ParameterSetName = 'Mapping', HelpMessage = "Chemin du fichier FileShareMapping.csv (colonnes : CheminUNC;NomFileShare;...)")]
+    [Parameter(Mandatory, ParameterSetName = 'Mapping', HelpMessage = "Chemin du fichier FileShareMapping.csv (colonnes : SourcePath;TargetType;TargetSPOURL;TargetFolder;DateFilter (YYYY-DD-MM);Permissions)")]
     [ValidateNotNullOrEmpty()]
     [string]$MappingCsv,
 
@@ -96,6 +96,8 @@ begin {
     Import-Module (Join-Path -Path $PSScriptRoot -ChildPath "Modules\PrimaGAZ.Assessment.psm1") -Force
     $outputModulePath = Join-Path -Path $PSScriptRoot -ChildPath "Modules\PrimaGAZ.Output.psm1"
     if (Test-Path $outputModulePath) { Import-Module $outputModulePath -Force }
+    $fileShareAssessmentModulePath = Join-Path -Path $PSScriptRoot -ChildPath 'FileShareAssessment/FileShareAssessment.psd1'
+    if (Test-Path $fileShareAssessmentModulePath) { Import-Module $fileShareAssessmentModulePath -Force }
     $smbModulePath = Join-Path -Path $PSScriptRoot -ChildPath "Modules\PrimaGAZ.SmbCredential.psm1"
     if (Test-Path $smbModulePath) {
         Import-Module $smbModulePath -Force -ErrorAction $(if ($Credential) { 'Stop' } else { 'SilentlyContinue' })
@@ -189,7 +191,9 @@ begin {
             [Parameter(Mandatory = $true)][string]$Timestamp,
             [Parameter(Mandatory = $true)][string]$OutputPath,
             [Parameter(Mandatory = $true)][bool]$IncludeFileDetail,
-            [Parameter(Mandatory = $true)][long]$FileDetailMinSizeBytes
+            [Parameter(Mandatory = $true)][long]$FileDetailMinSizeBytes,
+            [string]$SourceIdentifier = '',
+            [PSCustomObject]$Run = $null
         )
 
         $results = New-Object 'System.Collections.Generic.List[object]'
@@ -200,7 +204,6 @@ begin {
         $hiddenSystemSizeBytes = [long]0
         $itemsScannedLocal = 0
         $scanErrorsList = New-Object 'System.Collections.Generic.List[object]'
-        $seuilLVT = 5000
         $dossierEnfantsDirects = @{}
         $detailWriter = $null
         $detailFileCount = 0
@@ -210,7 +213,10 @@ begin {
         $safeNomFS = Get-SafeFileName -Value $NomFS
 
         if ($IncludeFileDetail) {
-            if ($Mode -eq 'Mapping') {
+            if ($Run -and -not [string]::IsNullOrWhiteSpace($SourceIdentifier)) {
+                $detailCsvPath = Get-AssessmentSourceFilePath -Run $Run -SourceIdentifier $SourceIdentifier -Prefix 'InventaireDetail' -Extension 'csv'
+            }
+            elseif ($Mode -eq 'Mapping') {
                 $detailCsvPath = Join-Path -Path $OutputPath -ChildPath "Inventaire_FileShare_Detail_${safeNomFS}_${Timestamp}.csv"
             }
             else {
@@ -351,7 +357,12 @@ begin {
 
             if ($denied.Count -gt 0) {
                 Write-Log "Sous-dossiers/objets refusés sur $NomFS : $($denied.Count)" "WARN"
-                $deniedCsv = Join-Path $errBase "AccessDenied_${safeNomFS}${errSuffix}.csv"
+                $deniedCsv = if ($Run -and -not [string]::IsNullOrWhiteSpace($SourceIdentifier)) {
+                    Get-AssessmentSourceFilePath -Run $Run -SourceIdentifier $SourceIdentifier -Prefix 'AccesRefuses' -Extension 'csv'
+                }
+                else {
+                    Join-Path $errBase "AccessDenied_${safeNomFS}${errSuffix}.csv"
+                }
                 $denied | Export-Csv -Path $deniedCsv -NoTypeInformation -Delimiter ';' -Encoding UTF8
                 Write-Log "CSV des refus : $deniedCsv" "WARN"
                 $denied | Select-Object -First 5 | ForEach-Object { Write-Log "  → Refusé : $($_.Chemin) [$($_.ExceptionType)]" "WARN" }
@@ -450,34 +461,18 @@ begin {
     $cheminsAScanner = New-Object 'System.Collections.Generic.List[object]'
 
     if ($PSCmdlet.ParameterSetName -eq 'Mapping') {
-        if (-not (Test-Path -Path $MappingCsv)) {
-            throw "Le fichier mapping '$MappingCsv' est introuvable."
+        $mappingValidation = Test-FileShareMapping -Path $MappingCsv
+        if (-not $mappingValidation.IsValid) {
+            throw (($mappingValidation.Errors | ForEach-Object { 'Ligne {0}: {1}' -f $_.LineNumber, $_.Message }) -join [Environment]::NewLine)
         }
 
-        $mappingData = @(Import-Csv -Path $MappingCsv -Delimiter ';' -Encoding UTF8)
-        if ($mappingData.Count -eq 0) {
-            throw "Le fichier mapping '$MappingCsv' est vide."
+        foreach ($warning in $mappingValidation.Warnings) {
+            Write-Log ('Mapping ligne {0}: {1}' -f $warning.LineNumber, $warning.Message) 'WARN'
+            $WarningCount++
         }
 
-        $columns = @($mappingData[0].PSObject.Properties.Name)
-        if (-not ($columns -contains 'CheminUNC')) {
-            throw "La colonne obligatoire 'CheminUNC' est absente du mapping CSV."
-        }
-        if (-not ($columns -contains 'NomFileShare')) {
-            throw "La colonne obligatoire 'NomFileShare' est absente du mapping CSV."
-        }
-
-        foreach ($row in $mappingData) {
-            if ([string]::IsNullOrWhiteSpace($row.CheminUNC) -or [string]::IsNullOrWhiteSpace($row.NomFileShare)) {
-                Write-Log "Ligne mapping ignorée (CheminUNC ou NomFileShare vide)." "WARN"
-                $WarningCount++
-                continue
-            }
-
-            $cheminsAScanner.Add([PSCustomObject]@{
-                CheminUNC    = $row.CheminUNC.Trim()
-                NomFileShare = $row.NomFileShare.Trim()
-            })
+        foreach ($row in (Import-FileShareMapping -Path $MappingCsv)) {
+            $cheminsAScanner.Add($row)
         }
 
         if ($cheminsAScanner.Count -eq 0) {
@@ -486,9 +481,21 @@ begin {
     }
     else {
         Test-SourcePath -Path $CheminUNC
+        $sourceContext = $null
+        try {
+            $sourceContext = Resolve-FileShareSourceMetadata -SourcePath $CheminUNC
+        }
+        catch {
+            $sourceContext = [PSCustomObject]@{
+                SourcePath       = $CheminUNC
+                SourceIdentifier = Get-SafeFileName -Value (Get-NomFileShareFromPath -Path $CheminUNC)
+            }
+        }
+
         $cheminsAScanner.Add([PSCustomObject]@{
-            CheminUNC    = $CheminUNC
-            NomFileShare = Get-NomFileShareFromPath -Path $CheminUNC
+            SourcePath       = $sourceContext.SourcePath
+            SourceIdentifier = $sourceContext.SourceIdentifier
+            LineNumber       = 0
         })
     }
 
@@ -515,9 +522,28 @@ process {
     Write-Log "Mode d'exécution : $($PSCmdlet.ParameterSetName)"
 
     foreach ($entry in $cheminsAScanner) {
-        $cheminN1 = $entry.CheminUNC
-        $nomFS = $entry.NomFileShare
+        $cheminN1 = if ($entry.PSObject.Properties.Name -contains 'SourcePath') { $entry.SourcePath } else { $entry.CheminUNC }
+        if ($entry.PSObject.Properties.Name -contains 'SourceIdentifier' -and -not [string]::IsNullOrWhiteSpace($entry.SourceIdentifier)) {
+            $sourceIdentifier = $entry.SourceIdentifier
+        }
+        elseif ($entry.PSObject.Properties.Name -contains 'NomFileShare' -and -not [string]::IsNullOrWhiteSpace($entry.NomFileShare)) {
+            $sourceIdentifier = Get-SafeFileName -Value $entry.NomFileShare
+        }
+        else {
+            $sourceIdentifier = Get-SafeFileName -Value (Get-NomFileShareFromPath -Path $cheminN1)
+        }
+        $nomFS = $sourceIdentifier
         $safeNomFS = Get-SafeFileName -Value $nomFS
+
+        if ($Run) {
+            $null = Get-AssessmentSourceFolder -Run $Run -SourceIdentifier $sourceIdentifier
+            $accessDeniedPath = Get-AssessmentSourceFilePath -Run $Run -SourceIdentifier $sourceIdentifier -Prefix 'AccesRefuses' -Extension 'csv'
+            Write-EmptyCsv -Path $accessDeniedPath -Columns @('NomFileShare','Chemin','TypeErreur','ExceptionType','MessageErreur','DateDetection')
+            if (-not $IncludeFileDetail) {
+                $detailPath = Get-AssessmentSourceFilePath -Run $Run -SourceIdentifier $sourceIdentifier -Prefix 'InventaireDetail' -Extension 'csv'
+                Write-EmptyCsv -Path $detailPath -Columns @('CheminComplet','CheminRelatif','DossierNiveau1','DossierParent','NomFichier','Extension','TailleOctets','TailleLisible','DateCreation','DateModification','DateDernierAcces','Attributs','EstHidden','EstSystem','EstReadOnly','EstArchive','EstReparsePoint','LongueurChemin','DateAnalyse')
+            }
+        }
 
         Write-Log "=== Démarrage scan : $nomFS ($cheminN1) ===" "INFO"
 
@@ -540,20 +566,34 @@ process {
 
         # Scan réel du N1
         try {
-            $statsN1 = Invoke-N1Scan -CheminN1 $cheminN1 -NomFS $nomFS -Mode $PSCmdlet.ParameterSetName -Timestamp $timestamp -OutputPath $OutputPath -IncludeFileDetail ([bool]$IncludeFileDetail) -FileDetailMinSizeBytes $fileDetailMinSizeBytes
+            $statsN1 = Invoke-N1Scan -CheminN1 $cheminN1 -NomFS $nomFS -Mode $PSCmdlet.ParameterSetName -Timestamp $timestamp -OutputPath $OutputPath -IncludeFileDetail ([bool]$IncludeFileDetail) -FileDetailMinSizeBytes $fileDetailMinSizeBytes -SourceIdentifier $sourceIdentifier -Run $Run
 
-            # Export CSV par N1 (un fichier par dossier scanné)
-            if ($PSCmdlet.ParameterSetName -eq 'Mapping') {
-                $csvN1Name = "Inventaire_FileShare_${safeNomFS}_${timestamp}.csv"
+            # Export CSV par source
+            if ($Run) {
+                $csvN1Path = Get-AssessmentSourceFilePath -Run $Run -SourceIdentifier $sourceIdentifier -Prefix 'Inventaire' -Extension 'csv'
+            }
+            elseif ($PSCmdlet.ParameterSetName -eq 'Mapping') {
+                $csvN1Path = Join-Path -Path $OutputPath -ChildPath "Inventaire_FileShare_${safeNomFS}_${timestamp}.csv"
             }
             else {
-                $csvN1Name = "Inventaire_FileShare_${timestamp}.csv"
+                $csvN1Path = Join-Path -Path $OutputPath -ChildPath "Inventaire_FileShare_${timestamp}.csv"
             }
 
-            $csvN1Path = Join-Path -Path $OutputPath -ChildPath $csvN1Name
             $statsN1.Results | Export-Csv -Path $csvN1Path -NoTypeInformation -Delimiter ';' -Encoding UTF8
+            if ($Run) {
+                @([PSCustomObject]@{
+                    SourceIdentifier = $sourceIdentifier
+                    SourcePath       = $cheminN1
+                    NombreFichiers   = $statsN1.FileCount
+                    NombreDossiers   = $statsN1.DirCount
+                    TailleOctets     = $statsN1.SizeBytes
+                    TailleLisible    = Get-HumanSize -Bytes $statsN1.SizeBytes
+                    FichiersDetail   = $statsN1.DetailFileCount
+                    DateAnalyse      = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
+                }) | Export-Csv -Path (Get-AssessmentSourceFilePath -Run $Run -SourceIdentifier $sourceIdentifier -Prefix 'Synthese' -Extension 'csv') -NoTypeInformation -Delimiter ';' -Encoding UTF8
+            }
             Write-Log "CSV par N1 généré : $csvN1Path" "SUCCESS"
-            $csvParN1.Add($csvN1Name)
+            $csvParN1.Add([System.IO.Path]::GetFileName($csvN1Path))
 
             if ($statsN1.DetailCsvPath) {
                 Write-Log "Nombre de fichiers exportés dans le détail ($nomFS) : $($statsN1.DetailFileCount)" "INFO"
@@ -578,13 +618,17 @@ process {
             }
 
             # Détection des dossiers dépassant le List View Threshold (> 5000 éléments directs)
-            $seuilLVT = 5000
-            $dossiersLVT = $statsN1.LVTFolders.GetEnumerator() | Where-Object { $_.Value -gt $seuilLVT }
+                $dossiersLVT = $statsN1.LVTFolders.GetEnumerator() | Where-Object { $_.Value -gt $seuilLVT }
             $nbDossiersLVT = ($dossiersLVT | Measure-Object).Count
             if ($nbDossiersLVT -gt 0) {
                 Write-Log "Dossiers dépassant le List View Threshold ($seuilLVT items directs) sur $nomFS : $nbDossiersLVT" "WARN"
                 $WarningCount++
-                $CsvLVTPath = Join-Path -Path $OutputPath -ChildPath "Dossiers_LVT_${safeNomFS}_$timestamp.csv"
+                $CsvLVTPath = if ($Run) {
+                    Get-AssessmentSourceFilePath -Run $Run -SourceIdentifier $sourceIdentifier -Prefix 'DossiersLVT' -Extension 'csv'
+                }
+                else {
+                    Join-Path -Path $OutputPath -ChildPath "Dossiers_LVT_${safeNomFS}_$timestamp.csv"
+                }
                 $dossiersLVT | Sort-Object Value -Descending | ForEach-Object {
                     [PSCustomObject]@{
                         NomFileShare         = $nomFS
